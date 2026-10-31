@@ -269,3 +269,20 @@ func TestOpenImageMissingFile(t *testing.T) {
 		t.Fatal("OpenImage sobre un fichero inexistente deberia fallar")
 	}
 }
+
+func TestHumanSize(t *testing.T) {
+	cases := []struct {
+		in   int64
+		want string
+	}{
+		{0, "0 B"},
+		{512, "512 B"},
+		{1536 * 1024, "1.5 MiB"},
+		{465 * 1 << 30, "465.0 GiB"},
+	}
+	for _, c := range cases {
+		if got := HumanSize(c.in); got != c.want {
+			t.Errorf("HumanSize(%d) = %q, se esperaba %q", c.in, got, c.want)
+		}
+	}
+}

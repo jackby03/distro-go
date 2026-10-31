@@ -136,3 +136,9 @@ Los milestones estan en roadmap.md.
 - [X] Retirar el validador casero del spike.
   - Evidencia: era un oraculo autorreferencial (go-diskfs leyendo lo que go-diskfs
     escribio). Eliminado; e2fsck queda como unico oraculo.
+
+- [ ] DG-22 — Etiqueta y sistema de ficheros ausentes con acceso 0 (M1).
+  - `GetVolumeInformationByHandle` sobre un handle abierto con acceso 0 falla en
+    algunas unidades: en la maquina de desarrollo, D: sale sin sistema de ficheros
+    aunque es NTFS. Las demas unidades si responden.
+  - Cierre: reintento con GENERIC_READ o motivo documentado de por que no se puede.

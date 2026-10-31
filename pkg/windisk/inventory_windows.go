@@ -360,6 +360,8 @@ func queryDiskExtents(h windows.Handle) ([]diskExtent, error) {
 	return parseDiskExtents(buf), nil
 }
 
+// TODO(DG-22): con acceso 0 esta consulta falla en algunas unidades (D: sale sin
+// sistema de ficheros). Reintentar con GENERIC_READ cuando el handle lo permita.
 func volumeLabelAndFS(h windows.Handle) (label, fs string) {
 	labelBuf := make([]uint16, 261)
 	fsBuf := make([]uint16, 64)

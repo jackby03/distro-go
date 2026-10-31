@@ -244,3 +244,20 @@ func (i *Image) Close() error {
 	}
 	return nil
 }
+
+// HumanSize formatea un numero de bytes para mostrarlo. Es solo presentacion:
+// no redondea los valores que se guardan en disco.
+func HumanSize(n int64) string {
+	const (
+		mib = 1 << 20
+		gib = 1 << 30
+	)
+	switch {
+	case n >= gib:
+		return fmt.Sprintf("%.1f GiB", float64(n)/gib)
+	case n >= mib:
+		return fmt.Sprintf("%.1f MiB", float64(n)/mib)
+	default:
+		return fmt.Sprintf("%d B", n)
+	}
+}

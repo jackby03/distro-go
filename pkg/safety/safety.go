@@ -105,7 +105,7 @@ func Assess(d blockdev.Disk, opts Options) Verdict {
 
 	if len(d.Partitions) > 0 {
 		v.Destructive = true
-		warn(WarnExistingParts, "ya tiene %d particiones que se van a sobrescribir", len(d.Partitions))
+		warn(WarnExistingParts, "particiones existentes: %d; se sustituiran al escribir", len(d.Partitions))
 	}
 
 	if d.Bus != blockdev.BusUSB && !opts.AllowNonUSB {
@@ -113,6 +113,14 @@ func Assess(d blockdev.Disk, opts Options) Verdict {
 	}
 
 	v.Eligible = len(v.Reasons) == 0
+
+	// Un disco bloqueado no se va a escribir, asi que hablar de lo que se
+	// destruiria solo confunde. Los bloqueos son la unica informacion util.
+	if !v.Eligible {
+		v.Warnings = nil
+		v.Destructive = false
+	}
+
 	return v
 }
 
@@ -141,25 +149,10 @@ func mountedVolumeSummary(d blockdev.Disk) []string {
 		if p.Volume.FileSystem != "" {
 			attrs = append(attrs, p.Volume.FileSystem)
 		}
-		attrs = append(attrs, humanSize(p.SizeBytes))
+		attrs = append(attrs, blockdev.HumanSize(p.SizeBytes))
 		out = append(out, fmt.Sprintf("%s (%s)", p.Volume.MountPoint, strings.Join(attrs, ", ")))
 	}
 	return out
-}
-
-func humanSize(n int64) string {
-	const (
-		mib = 1 << 20
-		gib = 1 << 30
-	)
-	switch {
-	case n >= gib:
-		return fmt.Sprintf("%.1f GiB", float64(n)/gib)
-	case n >= mib:
-		return fmt.Sprintf("%.1f MiB", float64(n)/mib)
-	default:
-		return fmt.Sprintf("%d B", n)
-	}
 }
 
 func matchMountPoints(d blockdev.Disk, wanted []string) []string {
