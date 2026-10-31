@@ -73,7 +73,14 @@ param(
     [switch]$Uefi,
     [switch]$Headless,
     [switch]$NoGuestIso,
-    [switch]$ResetNvram
+    [switch]$ResetNvram,
+    # Volcar la consola serie del invitado a un fichero. Solo captura lo que va
+    # por ttyS0: el sistema instalado arranca sin consola serie.
+    [string]$SerialLog,
+    # Aceleracion 3D con virtio-vga-gl y el backend gtk en modo OpenGL.
+    [switch]$Gl,
+    # Quitar la captura del raton al pasar por encima de la ventana.
+    [switch]$NoGrab
 )
 
 $ErrorActionPreference = "Stop"
