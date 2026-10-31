@@ -159,16 +159,41 @@ func (fs *FileSystem) Info() Info { return fs.info }
 // Label devuelve la etiqueta.
 func (fs *FileSystem) Label() string { return fs.info.Label }
 
-// Close vuelca la tabla FAT a las dos copias y sincroniza.
+// Close vuelca la tabla FAT, recalcula el resumen de clusters libres y
+// sincroniza. Hasta que se llama, los cambios solo viven en memoria.
 func (fs *FileSystem) Close() error {
+	if err := fs.flushFAT(); err != nil {
+		return err
+	}
+	if err := fs.flushFSInfo(); err != nil {
+		return err
+	}
+	if err := fs.dev.Sync(); err != nil {
+		return fmt.Errorf("sincronizar el volumen: %w", err)
+	}
+	return nil
+}
+
+// flushFAT escribe las dos copias de la tabla.
+func (fs *FileSystem) flushFAT() error {
 	for i := uint64(0); i < numFATs; i++ {
 		off := int64((fs.geom.reservedSectors + i*fs.geom.fatSectors) * fs.geom.sectorSize)
 		if err := writeAt(fs.dev, off, fs.fat); err != nil {
 			return fmt.Errorf("escribir la copia %d de la FAT: %w", i+1, err)
 		}
 	}
-	if err := fs.dev.Sync(); err != nil {
-		return fmt.Errorf("sincronizar el volumen: %w", err)
+	return nil
+}
+
+// flushFSInfo reescribe la informacion libre y su respaldo con el numero real de
+// clusters. fsck.fat comprueba ese numero, asi que no vale dejarlo obsoleto.
+func (fs *FileSystem) flushFSInfo() error {
+	info := fs.fsInfoSector(fs.freeClusters())
+	if err := writeAt(fs.dev, int64(fs.geom.sectorSize), info); err != nil {
+		return fmt.Errorf("escribir la FSInfo: %w", err)
+	}
+	if err := writeAt(fs.dev, int64(7*fs.geom.sectorSize), info); err != nil {
+		return fmt.Errorf("escribir el respaldo de la FSInfo: %w", err)
 	}
 	return nil
 }
@@ -196,15 +221,10 @@ func (fs *FileSystem) ClearSystemArea() error {
 		return fmt.Errorf("escribir el respaldo del sector de arranque: %w", err)
 	}
 
-	fsInfo := fs.fsInfoSector()
-	if err := writeAt(fs.dev, int64(1*sectorSize), fsInfo); err != nil {
-		return fmt.Errorf("escribir la FSInfo: %w", err)
+	if err := fs.flushFAT(); err != nil {
+		return err
 	}
-	if err := writeAt(fs.dev, int64(7*sectorSize), fsInfo); err != nil {
-		return fmt.Errorf("escribir el respaldo de la FSInfo: %w", err)
-	}
-
-	if err := fs.Close(); err != nil {
+	if err := fs.flushFSInfo(); err != nil {
 		return err
 	}
 
@@ -258,14 +278,14 @@ func (fs *FileSystem) bootSector() []byte {
 	return b
 }
 
-// fsInfoSector construye el sector de informacion libre.
-func (fs *FileSystem) fsInfoSector() []byte {
+// fsInfoSector construye el sector de informacion libre con el numero de
+// clusters que se le pase.
+func (fs *FileSystem) fsInfoSector(free uint32) []byte {
 	b := make([]byte, 512)
 
 	put32(b, 0, 0x41615252) // firma inicial
 	put32(b, 484, 0x61417272)
-	// Libre: los clusters menos el que ocupa el directorio raiz.
-	put32(b, 488, uint32(fs.geom.clusters-rootCluster+1))
+	put32(b, 488, free)
 	put32(b, 492, fs.nextFree)
 	put32(b, 508, 0xAA550000)
 
