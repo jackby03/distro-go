@@ -40,8 +40,8 @@ func (a *App) Run(args []string) int {
 	switch args[0] {
 	case "list":
 		return a.runList(args[1:])
-	// TODO(DG-23): el comando de particionado sobre imagen, que junta NewLayout,
-	// Plan y Commit. Es el criterio de salida de M2.
+	case "partition":
+		return a.runPartition(args[1:])
 	case "help", "-h", "--help":
 		a.printUsage()
 		return exitOK
@@ -99,13 +99,21 @@ func (a *App) printUsage() {
 
 Uso:
   distrogo list [--json] [--allow-non-usb]
+  distrogo partition --image <ruta> [--size 8GiB] [--esp 512MiB] [--force]
 
 Comandos:
-  list    discos de la maquina, su estado y lo que se destruiria al escribir
+  list       discos de la maquina, su estado y lo que se destruiria al escribir
+  partition  crea una imagen de disco con tabla GPT, ESP y root
 
 Flags de list:
   --json            salida JSON para scripts
   --allow-non-usb   no avisar de discos que no estan conectados por USB
+
+Flags de partition:
+  --image   ruta de la imagen a crear (obligatorio)
+  --size    tamano de la imagen, por defecto 8GiB
+  --esp     tamano de la particion EFI, por defecto 512MiB
+  --force   sobrescribir la imagen si ya existe
 
 El comando install llega en M6. Hasta entonces, todo se valida contra imagenes.
 `)

@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"distrogo/pkg/blockdev"
+	"distrogo/pkg/gpt"
 	"distrogo/pkg/windisk"
 )
 
@@ -234,5 +237,152 @@ func TestSystemMountsWithoutSystemRoot(t *testing.T) {
 
 	if mounts := SystemMounts(); mounts != nil {
 		t.Fatalf("SystemMounts() = %v, se esperaba nil", mounts)
+	}
+}
+
+func TestParseSize(t *testing.T) {
+	cases := []struct {
+		in      string
+		want    int64
+		wantErr bool
+	}{
+		{"8GiB", 8 << 30, false},
+		{"512MiB", 512 << 20, false},
+		{"1TiB", 1 << 40, false},
+		{"7.5GiB", 7*1<<30 + 1<<29, false},
+		{"8 gib", 8 << 30, false},
+		{"1048576", 1048576, false},
+		{"512B", 512, false},
+		{"0", 0, true},
+		{"", 0, true},
+		{"ocho gigas", 0, true},
+		{"-1GiB", 0, true},
+	}
+	for _, c := range cases {
+		got, err := parseSize(c.in)
+		if c.wantErr {
+			if err == nil {
+				t.Errorf("parseSize(%q) deberia fallar, devolvio %d", c.in, got)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("parseSize(%q): %v", c.in, err)
+			continue
+		}
+		if got != c.want {
+			t.Errorf("parseSize(%q) = %d, se esperaba %d", c.in, got, c.want)
+		}
+	}
+}
+
+func TestPartitionCreatesImage(t *testing.T) {
+	app, out, errBuf := newTestApp(windisk.Inventory{})
+	path := filepath.Join(t.TempDir(), "test.img")
+
+	code := app.Run([]string{"partition", "--image", path, "--size", "8MiB", "--esp", "1MiB"})
+	if code != exitOK {
+		t.Fatalf("codigo = %d, stderr: %s", code, errBuf.String())
+	}
+	if !strings.Contains(out.String(), "verificado") {
+		t.Errorf("la salida deberia anunciar la verificacion:\n%s", out.String())
+	}
+
+	img, err := blockdev.OpenImage(path, false)
+	if err != nil {
+		t.Fatalf("OpenImage: %v", err)
+	}
+	defer img.Close()
+
+	table, layout, err := gpt.Read(img)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if len(table.Partitions) != 2 {
+		t.Fatalf("particiones = %d", len(table.Partitions))
+	}
+	if table.Partitions[0].Type != gpt.TypeESP || table.Partitions[0].Name != "ESP" {
+		t.Errorf("la primera particion no es la ESP: %+v", table.Partitions[0])
+	}
+	if table.Partitions[1].Type != gpt.TypeLinuxFilesystem {
+		t.Errorf("la segunda particion no es de datos Linux: %+v", table.Partitions[1])
+	}
+	if table.Partitions[0].FirstLBA != 2048 {
+		t.Errorf("la ESP empieza en %d, se esperaba el LBA 2048", table.Partitions[0].FirstLBA)
+	}
+	if table.Partitions[1].LastLBA != layout.LastUsable {
+		t.Errorf("root acaba en %d y el area util en %d", table.Partitions[1].LastLBA, layout.LastUsable)
+	}
+
+	mbr := make([]byte, 512)
+	if _, err := img.ReadAt(mbr, 0); err != nil {
+		t.Fatalf("ReadAt: %v", err)
+	}
+	if mbr[446+4] != 0xEE || mbr[510] != 0x55 || mbr[511] != 0xAA {
+		t.Error("falta el MBR protector o su firma")
+	}
+}
+
+func TestPartitionRequiresImage(t *testing.T) {
+	app, _, errBuf := newTestApp(windisk.Inventory{})
+
+	if code := app.Run([]string{"partition"}); code != exitUsage {
+		t.Fatalf("codigo = %d, se esperaba %d", code, exitUsage)
+	}
+	if !strings.Contains(errBuf.String(), "--image") {
+		t.Errorf("el error deberia mencionar --image: %s", errBuf.String())
+	}
+}
+
+func TestPartitionRefusesToOverwriteWithoutForce(t *testing.T) {
+	app, _, errBuf := newTestApp(windisk.Inventory{})
+	path := filepath.Join(t.TempDir(), "test.img")
+	if err := os.WriteFile(path, []byte("contenido previo"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	if code := app.Run([]string{"partition", "--image", path, "--size", "8MiB"}); code != exitError {
+		t.Fatalf("codigo = %d, se esperaba %d", code, exitError)
+	}
+	if !strings.Contains(errBuf.String(), "--force") {
+		t.Errorf("el error deberia mencionar --force: %s", errBuf.String())
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if string(data) != "contenido previo" {
+		t.Fatal("la imagen existente no deberia haberse tocado")
+	}
+
+	app2, _, errBuf2 := newTestApp(windisk.Inventory{})
+	if code := app2.Run([]string{"partition", "--image", path, "--size", "8MiB", "--esp", "1MiB", "--force"}); code != exitOK {
+		t.Fatalf("con --force deberia funcionar, codigo = %d, stderr: %s", code, errBuf2.String())
+	}
+}
+
+func TestPartitionRejectsBadFlags(t *testing.T) {
+	cases := [][]string{
+		{"partition", "--image", filepath.Join(t.TempDir(), "x.img"), "--size", "ocho gigas"},
+		{"partition", "--image", filepath.Join(t.TempDir(), "x.img"), "--esp", "0"},
+	}
+	for _, args := range cases {
+		app, _, _ := newTestApp(windisk.Inventory{})
+		if code := app.Run(args); code != exitUsage {
+			t.Errorf("%v: codigo = %d, se esperaba %d", args, code, exitUsage)
+		}
+	}
+}
+
+func TestPartitionRejectsESPBiggerThanDisk(t *testing.T) {
+	app, _, errBuf := newTestApp(windisk.Inventory{})
+	path := filepath.Join(t.TempDir(), "test.img")
+
+	if code := app.Run([]string{"partition", "--image", path, "--size", "8MiB", "--esp", "16MiB"}); code != exitError {
+		t.Fatalf("codigo = %d, se esperaba %d", code, exitError)
+	}
+	if !strings.Contains(errBuf.String(), "repartir") {
+		t.Errorf("el error deberia venir de Plan: %s", errBuf.String())
 	}
 }

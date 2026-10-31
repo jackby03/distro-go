@@ -1,0 +1,26 @@
+# Normalizacion de finales de linea y marcado de binarios.
+#
+# El repositorio guarda LF y se sirve LF en todas las plataformas. Sin esto, git
+# en Windows avisa en cada commit de que va a convertir LF a CRLF y los diffs se
+# ensucian solos.
+#
+# DG-10.
+
+* text=auto eol=lf
+
+# Binarios: sin normalizar ni intentar diffs.
+*.iso  binary
+*.img  binary
+*.exe  binary
+*.fd   binary
+*.bin  binary
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.ico  binary
+
+# Formatos con convencion propia.
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.sh  text eol=lf
