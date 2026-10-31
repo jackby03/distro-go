@@ -45,34 +45,23 @@ El agente de IA actúa como copiloto técnico e implementador; el desarrollador 
 
 ---
 
-## 5. Verification Commands
-- **Verificación de sintaxis y tipos:**
-```powershell
-  go vet ./...
-
-```
-
-* **Ejecución de tests unitarios:**
-```powershell
-go test -v -race ./pkg/...
-
-```
-
-
-* **Validación del arnés QEMU (Alpine Guest):**
-```powershell
-qemu-system-x86_64 -m 2G -smp 2 -nographic -serial mon:stdio -drive file=alpine-virt-3.24.3-x86_64.iso,media=cdrom -drive file=test.img,format=raw,if=virtio
-
-```
+## 4. Coding Standards & Performance Rules
+- **Resource Management:**
+  - NUNCA usar `defer` dentro de bucles o funciones callback de recorrido (`WalkDir`, iteradores de inodos). Cerrar descriptores explícitamente tras consumir cada archivo.
+  - Streaming constante con buffer acotado (máximo 1 MiB por lectura/escritura con `io.CopyBuffer`). Prohibido leer archivos completos del rootfs a memoria (`os.ReadFile` / `io.ReadAll`).
+- **Disk Images on NTFS (Sparse Files):**
+  - Al generar archivos de imagen virtual (`.img`), todo dimensionamiento superior a 2 GiB debe marcarse explícitamente con `FSCTL_SET_SPARSE` vía `DeviceIoControl` antes de truncar, evitando la asignación inmediata de espacio físico real en NTFS (Registrado en DG-14).
+- **Error Handling:**
+  - Todos los errores deben ser contextualizados usando `fmt.Errorf("operación fallida en [contexto]: %w", err)`.
+  - Prohibido el uso de `panic()` fuera de inicializaciones estáticas o guardias de seguridad de hardware.
+- **POSIX Fidelity:**
+  - Respetar UID, GID, modos POSIX (`0755`, `4755` setuid), symlinks, inodos y mtime en los contratos de datos, sin depender de `os.FileInfo.Sys()` en Windows.
+  - El ajuste de permisos (`Chmod`) y tiempos (`SetTimes`) debe ejecutarse en una segunda pasada posterior al volcado de datos para preservar bits especiales.
 
 ---
 
-## 6. Definition of Done (DoD)
-
-Un hito o submódulo solo se considera terminado cuando:
-
-1. El código compila limpiamente con `CGO_ENABLED=0`.
-2. Los tests unitarios del paquete pasan al 100%.
-3. El comando de validación en QEMU reporta un resultado coherente (`e2fsck` limpio o parseo verificado).
-4. El humano otorga explícitamente el visto bueno para la siguiente tarea.
+## 5. Verification Commands
+- **Verificación de sintaxis y tipos:**
+  ```powershell
+  go vet ./...
 
