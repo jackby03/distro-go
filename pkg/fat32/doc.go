@@ -9,6 +9,6 @@
 // symlinks, asi que fingir el contrato seria mentir. Su API es minima:
 // formatear, crear directorios y crear ficheros.
 //
-// TODO(DG-24): falta la segunda mitad: directorios, ficheros, nombres 8.3
-// generados y entradas LFN.
+// TODO(DG-24): falta la segunda mitad: directorios, ficheros y su cadena de
+// clusters. Los nombres, 8.3 y LFN, ya estan en name.go.
 package fat32
