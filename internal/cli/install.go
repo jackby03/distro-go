@@ -288,3 +288,38 @@ func ensureDir(root *ext4fs.FS, path string) error {
 func pathOf(p string) string {
 	return strings.TrimPrefix(strings.TrimSpace(p), "/")
 }
+
+// buildAccount arma la cuenta de usuario a partir de lo que pida la CLI.
+//
+// Con --password-hash no se pregunta nada: sirve para scripts y para pruebas
+// desatendidas. Sin el, la contrasena se pide dos veces por el terminal, sin eco
+// y con mascara.
+func (a *App) buildAccount(name string, uid int, hash string) (accounts.User, error) {
+	u, err := accounts.New(name, uid)
+	if err != nil {
+		return accounts.User{}, err
+	}
+
+	if hash != "" {
+		if !strings.HasPrefix(hash, "$6$") {
+			return accounts.User{}, fmt.Errorf("--password-hash tiene que ser un hash SHA-512 ($6$...), no %q", hash)
+		}
+		u.Password = hash
+		return u, nil
+	}
+
+	clave, err := readNewPassword(name, promptPassword, a.Err)
+	if err != nil {
+		if errors.Is(err, ErrNoConsole) {
+			return accounts.User{}, fmt.Errorf("%w: usa --password-hash para instalaciones sin terminal", err)
+		}
+		return accounts.User{}, err
+	}
+
+	hashed, err := accounts.Hash(clave)
+	if err != nil {
+		return accounts.User{}, err
+	}
+	u.Password = hashed
+	return u, nil
+}

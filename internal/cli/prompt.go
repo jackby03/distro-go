@@ -131,3 +131,41 @@ func readPasswordFrom(r io.Reader, out io.Writer) (string, error) {
 		}
 	}
 }
+
+// intentosPassword es cuantas veces se pide la contrasena antes de rendirse.
+const intentosPassword = 3
+
+// readNewPassword pide una contrasena nueva, dos veces, y comprueba que coincide.
+//
+// Se pide dos veces porque no se ve lo que se escribe: sin la comprobacion, una
+// tecla de mas deja al usuario con una contrasena que no conoce y un sistema al
+// que no puede entrar. ask se inyecta para poder probar los reintentos sin
+// consola.
+func readNewPassword(name string, ask func(string) (string, error), out io.Writer) (string, error) {
+	var ultimo error
+
+	for intento := 1; intento <= intentosPassword; intento++ {
+		clave, err := ask(fmt.Sprintf("Contrasena para %s: ", name))
+		if err != nil {
+			return "", err
+		}
+		if clave == "" {
+			ultimo = errors.New("la contrasena esta vacia")
+			fmt.Fprintln(out, "error: la contrasena no puede estar vacia")
+			continue
+		}
+
+		repetida, err := ask("Repite la contrasena: ")
+		if err != nil {
+			return "", err
+		}
+		if clave != repetida {
+			ultimo = errors.New("las dos contrasenas no coinciden")
+			fmt.Fprintln(out, "error: no coinciden, intentalo otra vez")
+			continue
+		}
+		return clave, nil
+	}
+
+	return "", fmt.Errorf("no se pudo leer la contrasena: %w", ultimo)
+}

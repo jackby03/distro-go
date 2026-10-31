@@ -151,3 +151,78 @@ func TestReadPasswordFromAllowsEmptyPassword(t *testing.T) {
 		t.Fatalf("texto = %q, queria vacio", texto)
 	}
 }
+
+// pedirCon devuelve un ask que responde con las claves dadas, en orden.
+func pedirCon(claves ...string) func(string) (string, error) {
+	i := 0
+	return func(string) (string, error) {
+		if i >= len(claves) {
+			return "", errors.New("no quedan respuestas")
+		}
+		c := claves[i]
+		i++
+		return c, nil
+	}
+}
+
+func TestReadNewPasswordAcceptsMatchingPair(t *testing.T) {
+	var out strings.Builder
+
+	clave, err := readNewPassword("ana", pedirCon("secreta", "secreta"), &out)
+	if err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+	if clave != "secreta" {
+		t.Fatalf("clave = %q", clave)
+	}
+}
+
+func TestReadNewPasswordRetriesOnMismatch(t *testing.T) {
+	var out strings.Builder
+
+	clave, err := readNewPassword("ana", pedirCon("una", "otra", "buena", "buena"), &out)
+	if err != nil {
+		t.Fatalf("el segundo intento deberia servir: %v", err)
+	}
+	if clave != "buena" {
+		t.Fatalf("clave = %q, queria buena", clave)
+	}
+	if !strings.Contains(out.String(), "no coinciden") {
+		t.Fatalf("no aviso del fallo: %q", out.String())
+	}
+}
+
+func TestReadNewPasswordRejectsEmpty(t *testing.T) {
+	var out strings.Builder
+
+	clave, err := readNewPassword("ana", pedirCon("", "", "vale", "vale"), &out)
+	if err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+	if clave != "vale" {
+		t.Fatalf("clave = %q", clave)
+	}
+	if !strings.Contains(out.String(), "vacia") {
+		t.Fatalf("no aviso de la contrasena vacia: %q", out.String())
+	}
+}
+
+func TestReadNewPasswordGivesUpAfterThreeTries(t *testing.T) {
+	var out strings.Builder
+
+	_, err := readNewPassword("ana", pedirCon(
+		"a", "b", "c", "d", "e", "f",
+	), &out)
+	if err == nil {
+		t.Fatal("tras tres fallos tiene que rendirse")
+	}
+}
+
+func TestReadNewPasswordPropagatesCancel(t *testing.T) {
+	var out strings.Builder
+
+	ask := func(string) (string, error) { return "", ErrPromptInterrupted }
+	if _, err := readNewPassword("ana", ask, &out); !errors.Is(err, ErrPromptInterrupted) {
+		t.Fatalf("err = %v, queria ErrPromptInterrupted", err)
+	}
+}

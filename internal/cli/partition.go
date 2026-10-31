@@ -37,6 +37,9 @@ func (a *App) runPartition(args []string) int {
 	bootFrom := fs.String("boot-from", "", "ISO del que copiar el arranque al ESP")
 	withSquashfs := fs.Bool("with-squashfs", false, "copiar tambien el rootfs comprimido al ESP")
 	kernelArgs := fs.String("kernel-args", "", "parametros de arranque del kernel, separados por espacios")
+	userName := fs.String("user", "", "nombre de la cuenta que se crea en el sistema instalado")
+	userUID := fs.Int("uid", 1000, "UID de esa cuenta")
+	passwordHash := fs.String("password-hash", "", "hash SHA-512 ($6$...) de la contrasena, para uso no interactivo")
 
 	if err := fs.Parse(args); err != nil {
 		return exitUsage
@@ -47,6 +50,10 @@ func (a *App) runPartition(args []string) int {
 	}
 	if *imagePath == "" {
 		fmt.Fprintln(a.Err, "error: falta --image")
+		return exitUsage
+	}
+	if *userName != "" && !*install {
+		fmt.Fprintln(a.Err, "error: --user necesita --install, la cuenta se crea en el sistema instalado")
 		return exitUsage
 	}
 	if *install {
@@ -129,6 +136,7 @@ func (a *App) runPartition(args []string) int {
 	var espContent *efilayout.Result
 	var rootInfo *ext4fs.Info
 	var rootStats *rootfs.Stats
+	var accountInfo *userResult
 	var espVol *fat32.FileSystem
 	var rootVol *ext4fs.FS
 
@@ -270,6 +278,22 @@ func (a *App) runPartition(args []string) int {
 				return exitError
 			}
 			espContent = &res
+
+			if *userName != "" {
+				account, err := a.buildAccount(*userName, *userUID, *passwordHash)
+				if err != nil {
+					fmt.Fprintf(a.Err, "error: preparar la cuenta: %v\n", err)
+					return exitError
+				}
+
+				a.phase("creando la cuenta %s en el sistema instalado", account.Name)
+				created, err := a.createUser(rootVol, account)
+				if err != nil {
+					fmt.Fprintf(a.Err, "error: crear la cuenta: %v\n", err)
+					return exitError
+				}
+				accountInfo = &created
+			}
 		}
 
 		info, err := vol.Info()
@@ -293,6 +317,11 @@ func (a *App) runPartition(args []string) int {
 	}
 
 	a.writePartitionSummary(*imagePath, size, img.SectorSize(), layout, table, espInfo, espContent, rootInfo, rootStats)
+
+	if accountInfo != nil {
+		fmt.Fprintf(a.Out, "cuenta     : %s (uid %d), home %s, grupo %s, %d ficheros de skel\n",
+			accountInfo.User, accountInfo.UID, accountInfo.Home, accountInfo.AdminGroup, accountInfo.HomeFiles)
+	}
 	return exitOK
 }
 

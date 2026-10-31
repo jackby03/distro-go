@@ -263,3 +263,94 @@ func TestTargetOnClosedVolumeFails(t *testing.T) {
 	}
 
 }
+
+// TestChownSkipsOnlyWhenTheParentAlreadyHasThatOwner comprueba la optimizacion
+// que evita dos tercios de los recorridos de ruta en un volcado.
+func TestChownSkipsOnlyWhenTheParentAlreadyHasThatOwner(t *testing.T) {
+	fs := newFS(t)
+	tgt := fs.Target()
+
+	// 1. En la raiz, root:root es lo que ya hay: no hay que tocar el inodo.
+	if err := tgt.Mkdir(rootfs.Entry{Path: "usr", Type: rootfs.TypeDir, Mode: iofs.ModeDir | 0o755}); err != nil {
+		t.Fatalf("Mkdir: %v", err)
+	}
+	if err := tgt.Chown(rootfs.Entry{Path: "usr", Type: rootfs.TypeDir, UID: 0, GID: 0}); err != nil {
+		t.Fatalf("Chown usr: %v", err)
+	}
+
+	// 2. Un directorio de otro usuario: el hijo hereda su dueno, asi que si
+	// queremos root hay que cambiarlo de verdad.
+	if err := tgt.Mkdir(rootfs.Entry{Path: "home", Type: rootfs.TypeDir, Mode: iofs.ModeDir | 0o755}); err != nil {
+		t.Fatalf("Mkdir home: %v", err)
+	}
+	if err := tgt.Mkdir(rootfs.Entry{Path: "home/ana", Type: rootfs.TypeDir, Mode: iofs.ModeDir | 0o755}); err != nil {
+		t.Fatalf("Mkdir home/ana: %v", err)
+	}
+	if err := tgt.Chown(rootfs.Entry{Path: "home/ana", Type: rootfs.TypeDir, UID: 1000, GID: 1000}); err != nil {
+		t.Fatalf("Chown home/ana: %v", err)
+	}
+
+	// Un fichero de root dentro del home de ana: sin Chown se quedaria en
+	// 1000:1000, que es el bug que caza esta prueba.
+	w, err := tgt.Create(rootfs.Entry{Path: "home/ana/.bashrc", Type: rootfs.TypeRegular, Mode: 0o644})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, err := w.Write([]byte("x")); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if err := tgt.Chown(rootfs.Entry{Path: "home/ana/.bashrc", Type: rootfs.TypeRegular, UID: 0, GID: 0}); err != nil {
+		t.Fatalf("Chown .bashrc: %v", err)
+	}
+
+	duenos := map[string][2]uint32{}
+	err = Source(fs, "").Walk(func(e rootfs.Entry) error {
+		duenos[e.Path] = [2]uint32{e.UID, e.GID}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk: %v", err)
+	}
+	if got := duenos["home/ana"]; got != [2]uint32{1000, 1000} {
+		t.Fatalf("home/ana = %v, queria 1000:1000", got)
+	}
+	if got := duenos["home/ana/.bashrc"]; got != [2]uint32{0, 0} {
+		t.Fatalf(".bashrc = %v, queria 0:0: el hijo heredo el dueno del padre", got)
+	}
+}
+
+// TestChmodSkipsTheDefaultMode cubre el otro atajo: si el modo pedido es el que
+// la entrada ya tiene al nacer, no hay que recorrer la ruta.
+func TestChmodSkipsTheDefaultMode(t *testing.T) {
+	fs := newFS(t)
+	tgt := fs.Target()
+
+	if err := tgt.Mkdir(rootfs.Entry{Path: "etc", Type: rootfs.TypeDir, Mode: iofs.ModeDir | 0o755}); err != nil {
+		t.Fatalf("Mkdir: %v", err)
+	}
+	// Pedir el modo que ya tiene tiene que ser inofensivo...
+	if err := tgt.Chmod(rootfs.Entry{Path: "etc", Type: rootfs.TypeDir, Mode: iofs.ModeDir | 0o755}); err != nil {
+		t.Fatalf("Chmod: %v", err)
+	}
+	// ...y pedir otro tiene que aplicarse.
+	if err := tgt.Chmod(rootfs.Entry{Path: "etc", Type: rootfs.TypeDir, Mode: iofs.ModeDir | 0o700}); err != nil {
+		t.Fatalf("Chmod 0700: %v", err)
+	}
+
+	var modo iofs.FileMode
+	err := Source(fs, "").Walk(func(e rootfs.Entry) error {
+		if e.Path == "etc" {
+			modo = e.Mode
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk: %v", err)
+	}
+	if modo != iofs.ModeDir|0o700 {
+		t.Fatalf("modo = %v, queria drwx------", modo)
+	}
+}

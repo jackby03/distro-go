@@ -4,7 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	iofs "io/fs"
 	"os"
+	pathpkg "path"
 
 	"github.com/diskfs/go-diskfs/filesystem"
 	"github.com/diskfs/go-diskfs/filesystem/ext4"
@@ -18,11 +20,18 @@ import (
 // chocar con los metodos simples (Mkdir recibe una ruta, no una entrada) y para
 // dejar claro que FS es la capa de volumen y esto solo la traduccion.
 func (f *FS) Target() rootfs.Target {
-	return &target{fs: f}
+	return &target{fs: f, duenos: map[string][2]uint32{".": {0, 0}}}
 }
 
 type target struct {
 	fs *FS
+	// duenos recuerda el dueno con el que quedaron los directorios visitados.
+	//
+	// Hace falta porque una entrada nueva hereda el dueno de su padre: dentro de
+	// /home/ana, que es 1000:1000, un fichero nace 1000:1000 aunque queramos
+	// root. Comparar con lo que ya hay evita los Chown inutiles, que son un
+	// recorrido completo de la ruta cada uno, sin saltarselos donde importan.
+	duenos map[string][2]uint32
 }
 
 // filesystem devuelve el volumen, o un error si ya se cerro. Sin esta guarda,
@@ -79,7 +88,23 @@ func (t *target) Mknod(e rootfs.Entry) error {
 		efs.Mknod(e.Path, uint32(mknodMode(e)), int(e.Rdev&0xFFFFFFFF)))
 }
 
+// modeReciennNacido es el modo con el que go-diskfs crea ficheros y directorios.
+//
+// Verificado sobre una imagen recien formateada: Create y Mkdir dejan 0755 y
+// dueno 0:0. Cambiar eso a lo mismo cuesta un recorrido completo de la ruta por
+// cada entrada, y en un rootfs la mayoria son root:root a 0755.
+const modeRecienNacido = 0755
+
 func (t *target) Chmod(e rootfs.Entry) error {
+	// Nada que hacer si ya nace asi: los bits especiales (setuid, setgid,
+	// sticky) no entran en esta comparacion, asi que esos si se aplican.
+	if e.Mode == modeRecienNacido && e.Type == rootfs.TypeRegular {
+		return nil
+	}
+	if e.Mode == iofs.ModeDir|modeRecienNacido && e.Type == rootfs.TypeDir {
+		return nil
+	}
+
 	efs, err := t.filesystem()
 	if err != nil {
 		return err
@@ -88,11 +113,25 @@ func (t *target) Chmod(e rootfs.Entry) error {
 }
 
 func (t *target) Chown(e rootfs.Entry) error {
+	quiere := [2]uint32{e.UID, e.GID}
+
+	// Si el padre ya tiene ese dueno, el hijo nace con el: no hay nada que
+	// cambiar. En un rootfs eso cubre casi todo el arbol. Un padre desconocido
+	// no vale como 0:0: hay que preguntar, porque puede ser el home de alguien.
+	if dueno, conocido := t.duenos[pathpkg.Dir(e.Path)]; conocido && dueno == quiere {
+		t.duenos[e.Path] = quiere
+		return nil
+	}
+
 	efs, err := t.filesystem()
 	if err != nil {
 		return err
 	}
-	return mapErr("cambiar el dueno de", e.Path, efs.Chown(e.Path, int(e.UID), int(e.GID)))
+	if err := mapErr("cambiar el dueno de", e.Path, efs.Chown(e.Path, int(e.UID), int(e.GID))); err != nil {
+		return err
+	}
+	t.duenos[e.Path] = quiere
+	return nil
 }
 
 func (t *target) SetTimes(e rootfs.Entry) error {

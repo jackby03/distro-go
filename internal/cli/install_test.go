@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"distrogo/pkg/accounts"
 	"distrogo/pkg/blockdev"
@@ -340,5 +341,53 @@ func TestCreateUserFailsWithoutAdminGroup(t *testing.T) {
 	// Y no debe quedar un home a medias.
 	if _, err := root.Stat("home/ana"); err == nil {
 		t.Fatal("el home se creo aunque la cuenta no se pudo terminar")
+	}
+}
+
+func TestBuildAccountWithPasswordHashDoesNotAsk(t *testing.T) {
+	// Con --password-hash no hay terminal de por medio: sirve para scripts.
+	hash, err := accounts.Hash("correcta")
+	if err != nil {
+		t.Fatalf("Hash: %v", err)
+	}
+
+	app := &App{Out: &bytes.Buffer{}, Err: &bytes.Buffer{}}
+	u, err := app.buildAccount("ana", 1000, hash)
+	if err != nil {
+		t.Fatalf("buildAccount: %v", err)
+	}
+	if u.Password != hash {
+		t.Fatalf("no uso el hash dado")
+	}
+	if u.Home != "/home/ana" || u.UID != 1000 || u.GID != 1000 {
+		t.Fatalf("cuenta mal armada: %+v", u)
+	}
+	// Y la linea de shadow sale con ese hash.
+	if _, err := u.Shadow(time.Now()); err != nil {
+		t.Fatalf("Shadow: %v", err)
+	}
+}
+
+func TestBuildAccountRejectsNonSHA512Hash(t *testing.T) {
+	app := &App{Out: &bytes.Buffer{}, Err: &bytes.Buffer{}}
+
+	for _, hash := range []string{"correcta", "$1$sal$hash", "$y$j9T$sal$hash"} {
+		if _, err := app.buildAccount("ana", 1000, hash); err == nil {
+			t.Errorf("%q: deberia rechazarse en la CLI y no llegar al disco", hash)
+		}
+	}
+}
+
+func TestPartitionRequiresInstallForUser(t *testing.T) {
+	app := &App{Out: &bytes.Buffer{}, Err: &bytes.Buffer{}}
+
+	// Sin --install no hay sistema donde crear la cuenta: hay que avisar en vez
+	// de ignorar la flag en silencio.
+	code := app.Run([]string{"partition", "--image", filepath.Join(t.TempDir(), "x.img"), "--user", "ana"})
+	if code == exitOK {
+		t.Fatal("--user sin --install no puede terminar bien")
+	}
+	if !strings.Contains(app.Err.(*bytes.Buffer).String(), "--user necesita --install") {
+		t.Fatalf("no explico el motivo: %q", app.Err.(*bytes.Buffer).String())
 	}
 }
