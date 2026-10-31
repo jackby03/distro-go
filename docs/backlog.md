@@ -147,3 +147,9 @@ Los milestones estan en roadmap.md.
     algunas unidades: en la maquina de desarrollo, D: sale sin sistema de ficheros
     aunque es NTFS. Las demas unidades si responden.
   - Cierre: reintento con GENERIC_READ o motivo documentado de por que no se puede.
+
+- [ ] DG-23 — Comando `partition` sobre imagen (M2).
+  - Falta el comando que junte `NewLayout`, `Plan` y `Commit` para producir un
+    `test.img` con ESP y root, y lo verifique con `Read`.
+  - Cierre: `distrogo partition --image test.img` genera la tabla y
+    `sfdisk -l` en QEMU muestra dos particiones.

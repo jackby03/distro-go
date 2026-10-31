@@ -40,6 +40,8 @@ func (a *App) Run(args []string) int {
 	switch args[0] {
 	case "list":
 		return a.runList(args[1:])
+	// TODO(DG-23): el comando de particionado sobre imagen, que junta NewLayout,
+	// Plan y Commit. Es el criterio de salida de M2.
 	case "help", "-h", "--help":
 		a.printUsage()
 		return exitOK
