@@ -55,13 +55,15 @@ No se re-discuten sin abrir un DG-xx que lo justifique.
     (aloja Windows); Disk 2 y Disk 3 aparecen elegibles con el aviso de lo que se
     destruiria; no escribe nada y funciona sin admin. Cumplido y aprobado.
 
-- [ ] M2 — GPT sobre imagen
+- [X] M2 — GPT sobre imagen
   - Entrega: particionado de un .img con ESP de 512 MiB y root con el resto, con la
     tabla publicada al final (commit-last).
   - Ficheros: pkg/gpt y el comando de particionado.
   - Respuestas: ~3.
   - Criterio de salida: `sfdisk -l test.img` muestra dos particiones, los CRC de GPT
     son correctos y la operacion se puede repetir sin corromper la imagen.
+    Cumplido: sfdisk 2.42.3 en Alpine confirma GPT, dos particiones, header 1.0,
+    2 de 128 entradas y "No errors detected".
 
 - [ ] M3 — FAT32, ESP e ISO live
   - Entrega: formateo FAT32 del ESP, copia del shim y GRUB del ISO, grub.cfg generado

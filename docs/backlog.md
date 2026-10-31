@@ -58,10 +58,6 @@ Los milestones estan en roadmap.md.
   - El README declara MIT y enlaza a un fichero que no existe.
   - Cierre: `LICENSE` en la raiz con el texto MIT y el año y titular correctos.
 
-- [ ] DG-10 — Falta .gitattributes (M0).
-  - Repo en Windows con codigo Go. Conviene fijar finales de linea y marcar binarios.
-  - Cierre: `.gitattributes` versionado y `git ls-files --eol` sin avisos.
-
 - [ ] DG-11 — `distrogo list` sin elevacion (M1).
   - Debe funcionar con IOCTLs de solo consulta.
   - Cierre: ejecutado desde una consola sin privilegios y lista los cuatro discos.
@@ -122,6 +118,23 @@ Los milestones estan en roadmap.md.
 
 ## Cerrados
 
+- [X] M2 — GPT sobre imagen validado con una herramienta externa.
+  - Evidencia: sfdisk 2.42.3 en Alpine, sin red, sobre out/test.img de 8 GiB.
+    Disklabel gpt, Disk identifier 928d4912-3120-4c5f-ad86-9118bd1663fa,
+    /dev/vda1 2048..1050623 (512M, EFI System) y /dev/vda2 1050624..16777182
+    (7.5G, Linux filesystem); `sfdisk --verify` responde "No errors detected",
+    header version 1.0 y 2 de 128 entradas.
+
+- [X] DG-10 — .gitattributes con finales de linea normalizados.
+  - Evidencia: `* text=auto eol=lf`, binarios marcados y formatos con convencion
+    propia (ps1/bat en CRLF, sh en LF).
+
+- [X] DG-23 — `distrogo partition` sobre imagen.
+  - Evidencia: genera out/test.img de 8 GiB con ESP de 512 MiB en LBA 2048 y root
+    hasta el final del area util; MBR protector 0xEE en el byte 450, firma 55 AA y
+    sectores 0x00FFFFFF; verificacion con Read antes de salir. Falta la lectura con
+    `sfdisk` en QEMU para cerrar M2.
+
 - [X] M1 — distrogo list sobre hardware real.
   - Evidencia: 49 pruebas en verde; salida real con cuatro discos, Disk 1 bloqueado
     por alojar Windows, Disk 2 y Disk 3 elegibles y destructivos, ejecutado sin
@@ -148,8 +161,3 @@ Los milestones estan en roadmap.md.
     aunque es NTFS. Las demas unidades si responden.
   - Cierre: reintento con GENERIC_READ o motivo documentado de por que no se puede.
 
-- [ ] DG-23 — Comando `partition` sobre imagen (M2).
-  - Falta el comando que junte `NewLayout`, `Plan` y `Commit` para producir un
-    `test.img` con ESP y root, y lo verifique con `Read`.
-  - Cierre: `distrogo partition --image test.img` genera la tabla y
-    `sfdisk -l` en QEMU muestra dos particiones.
