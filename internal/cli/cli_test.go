@@ -437,7 +437,7 @@ func TestPartitionCanSkipESPFormat(t *testing.T) {
 
 	// Con --format-esp=false cabe una ESP diminuta: solo se escribe la tabla.
 	if code := app.Run([]string{
-		"partition", "--image", path, "--size", "8MiB", "--esp", "1MiB", "--format-esp=false",
+		"partition", "--image", path, "--size", "8MiB", "--esp", "1MiB", "--format-esp=false", "--format-root=false",
 	}); code != exitOK {
 		t.Fatalf("codigo = %d, stderr: %s", code, errBuf.String())
 	}

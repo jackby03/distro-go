@@ -10,6 +10,7 @@ import (
 
 	"distrogo/pkg/blockdev"
 	"distrogo/pkg/efilayout"
+	"distrogo/pkg/ext4fs"
 	"distrogo/pkg/fat32"
 	"distrogo/pkg/gpt"
 	"distrogo/pkg/linuxiso"
@@ -26,6 +27,7 @@ func (a *App) runPartition(args []string) int {
 	espFlag := fs.String("esp", "512MiB", "tamano de la particion EFI")
 	force := fs.Bool("force", false, "sobrescribir la imagen si ya existe")
 	formatESP := fs.Bool("format-esp", true, "formatear la particion EFI en FAT32")
+	formatRoot := fs.Bool("format-root", true, "formatear la particion root en ext4")
 	bootFrom := fs.String("boot-from", "", "ISO del que copiar el arranque al ESP")
 	withSquashfs := fs.Bool("with-squashfs", false, "copiar tambien el rootfs comprimido al ESP")
 	kernelArgs := fs.String("kernel-args", "", "parametros de arranque del kernel, separados por espacios")
@@ -111,6 +113,7 @@ func (a *App) runPartition(args []string) int {
 	// recortada del dispositivo. Es el mismo camino que usara el root en M5.
 	var espInfo *fat32.Info
 	var espContent *efilayout.Result
+	var rootInfo *ext4fs.Info
 	if *formatESP {
 		esp := table.Partitions[0]
 		offset := int64(esp.FirstLBA) * int64(layout.SectorSize)
@@ -143,7 +146,29 @@ func (a *App) runPartition(args []string) int {
 		}
 	}
 
-	a.writePartitionSummary(*imagePath, size, img.SectorSize(), layout, table, espInfo, espContent)
+	if *formatRoot {
+		root := table.Partitions[1]
+		offset := int64(root.FirstLBA) * int64(layout.SectorSize)
+		vol, err := ext4fs.Format(img, offset, root.Bytes(layout.SectorSize), ext4fs.Options{
+			Label: "distrogo-root",
+		})
+		if err != nil {
+			fmt.Fprintf(a.Err, "error: formatear el root: %v\n", err)
+			return exitError
+		}
+		info, err := vol.Info()
+		if err != nil {
+			fmt.Fprintf(a.Err, "error: leer el root: %v\n", err)
+			return exitError
+		}
+		if err := vol.Close(); err != nil {
+			fmt.Fprintf(a.Err, "error: cerrar el root: %v\n", err)
+			return exitError
+		}
+		rootInfo = &info
+	}
+
+	a.writePartitionSummary(*imagePath, size, img.SectorSize(), layout, table, espInfo, espContent, rootInfo)
 	return exitOK
 }
 
@@ -176,7 +201,11 @@ func (a *App) populateESP(vol *fat32.FileSystem, isoPath string, withSquashfs bo
 	return res, nil
 }
 
-func (a *App) writePartitionSummary(path string, size int64, sectorSize int, l gpt.Layout, t *gpt.Table, esp *fat32.Info, content *efilayout.Result) {
+func (a *App) writePartitionSummary(path string, size int64, sectorSize int, l gpt.Layout, t *gpt.Table, esp *fat32.Info, content *efilayout.Result, root *ext4fs.Info) {
+	if root != nil {
+		fmt.Fprintf(a.Out, "root       : ext4, bloque %d, %d inodos, UUID %s, libre %s\n",
+			root.BlockSize, root.InodeCount, root.UUID, blockdev.HumanSize(root.FreeBytes))
+	}
 	fmt.Fprintf(a.Out, "imagen     : %s (%s, %d sectores de %d)\n",
 		path, blockdev.HumanSize(size), l.TotalSectors, sectorSize)
 	fmt.Fprintf(a.Out, "disco GUID : %s\n", t.DiskGUID)

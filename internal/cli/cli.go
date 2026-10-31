@@ -115,6 +115,7 @@ Flags de partition:
   --esp     tamano de la particion EFI, por defecto 512MiB
   --force   sobrescribir la imagen si ya existe
   --format-esp  formatear la particion EFI en FAT32 (por defecto si)
+  --format-root formatear la particion root en ext4 (por defecto si)
   --boot-from   ISO del que copiar el arranque al ESP
   --with-squashfs  copiar tambien el rootfs comprimido (ESP grande)
   --kernel-args parametros de arranque del kernel
