@@ -46,6 +46,8 @@ func (a *App) Run(args []string) int {
 		return a.runBoot(args[1:])
 	case "install":
 		return a.runInstall(args[1:])
+	case "flash":
+		return a.runFlash(args[1:])
 	case "help", "-h", "--help":
 		a.printUsage()
 		return exitOK
@@ -105,11 +107,14 @@ Uso:
   distrogo list [--json] [--allow-non-usb]
   distrogo partition --image <ruta> [--size 8GiB] [--esp 512MiB] [--force]
   distrogo boot --image <ruta> [--title <texto>]
+  distrogo install --target-disk <n> --expect-serial <serial> [--iso <ruta>] [--apply]
 
 Comandos:
   list       discos de la maquina, su estado y lo que se destruiria al escribir
   partition  crea una imagen de disco con tabla GPT, ESP y root
   boot       deja arrancando el sistema ya volcado en una imagen
+  install    comprueba el disco fisico y, con --apply, instala en el
+  flash      copia una imagen ya construida a un disco fisico
 
 Flags de list:
   --json            salida JSON para scripts

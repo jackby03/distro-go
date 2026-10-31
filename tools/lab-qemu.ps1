@@ -115,11 +115,16 @@ function Resolve-Ovmf {
     return @{ Code = $code; Vars = $vars }
 }
 
-if (-not (Test-Path $Image)) {
+# Una ruta de dispositivo (\.\PhysicalDriveN) no se puede comprobar con Test-Path:
+# no es un fichero, es un disco. Se acepta tal cual y se deja que QEMU lo abra.
+# El prefijo se construye con el codigo del caracter para no pelearse con los
+# escapes: dos barras invertidas, un punto y otra barra invertida.
+$barra = [string][char]92
+$prefijoDisco = $barra + $barra + '.' + $barra + 'PhysicalDrive'
+$esDispositivo = $Image.StartsWith($prefijoDisco, [StringComparison]::OrdinalIgnoreCase)
+
+if (-not $esDispositivo -and -not (Test-Path $Image)) {
     throw "No existe la imagen '$Image'. Generala con: .\out\distrogo.exe partition --image $Image --size 8GiB"
-}
-if (-not $NoGuestIso -and -not (Test-Path $Iso)) {
-    throw "No existe el ISO '$Iso'. Comprueba testdata/isos/."
 }
 
 $qemu = Resolve-Qemu
