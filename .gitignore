@@ -1,0 +1,38 @@
+# =============================================================================
+# DistroGo — .gitignore
+#
+# Regla de oro: nada que pese más de unos pocos MiB puede entrar al repositorio.
+# Los ISOs de prueba viven en testdata/isos/ (el toolchain de Go ignora
+# "testdata") y se resuelven por flag o por DISTROGO_ISO_DIR.
+# =============================================================================
+
+# --- Fixtures binarios: ISOs de prueba (2-3 GiB cada uno) --------------------
+*.iso
+testdata/isos/
+
+# --- Artefactos del spike y del instalador ----------------------------------
+# Imágenes de disco planas: el banco de pruebas completo (decenas de GiB).
+/out/
+*.img
+*.img.partial
+
+# Binarios compilados
+*.exe
+/distrogo
+/distrogo.exe
+
+# --- Go ---------------------------------------------------------------------
+# go.sum NO se ignora: fija el árbol de dependencias.
+# vendor/ tampoco: lo queremos versionado por política de supply chain.
+*.test
+coverage.out
+*.prof
+
+# --- Entorno de desarrollo --------------------------------------------------
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.swp
+*~
