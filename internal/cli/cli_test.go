@@ -280,7 +280,7 @@ func TestPartitionCreatesImage(t *testing.T) {
 	app, out, errBuf := newTestApp(windisk.Inventory{})
 	path := filepath.Join(t.TempDir(), "test.img")
 
-	code := app.Run([]string{"partition", "--image", path, "--size", "8MiB", "--esp", "1MiB"})
+	code := app.Run([]string{"partition", "--image", path, "--size", "64MiB", "--esp", "40MiB"})
 	if code != exitOK {
 		t.Fatalf("codigo = %d, stderr: %s", code, errBuf.String())
 	}
@@ -357,7 +357,7 @@ func TestPartitionRefusesToOverwriteWithoutForce(t *testing.T) {
 	}
 
 	app2, _, errBuf2 := newTestApp(windisk.Inventory{})
-	if code := app2.Run([]string{"partition", "--image", path, "--size", "8MiB", "--esp", "1MiB", "--force"}); code != exitOK {
+	if code := app2.Run([]string{"partition", "--image", path, "--size", "64MiB", "--esp", "40MiB", "--force"}); code != exitOK {
 		t.Fatalf("con --force deberia funcionar, codigo = %d, stderr: %s", code, errBuf2.String())
 	}
 }
@@ -384,5 +384,61 @@ func TestPartitionRejectsESPBiggerThanDisk(t *testing.T) {
 	}
 	if !strings.Contains(errBuf.String(), "repartir") {
 		t.Errorf("el error deberia venir de Plan: %s", errBuf.String())
+	}
+}
+
+// La ESP tiene que quedar formateada en FAT32 y con su BPB legible.
+func TestPartitionFormatsESPinFAT32(t *testing.T) {
+	app, out, errBuf := newTestApp(windisk.Inventory{})
+	path := filepath.Join(t.TempDir(), "test.img")
+
+	if code := app.Run([]string{"partition", "--image", path, "--size", "64MiB", "--esp", "40MiB"}); code != exitOK {
+		t.Fatalf("codigo = %d, stderr: %s", code, errBuf.String())
+	}
+	if !strings.Contains(out.String(), "FAT32") {
+		t.Errorf("el resumen deberia anunciar FAT32:\n%s", out.String())
+	}
+
+	img, err := blockdev.OpenImage(path, false)
+	if err != nil {
+		t.Fatalf("OpenImage: %v", err)
+	}
+	defer img.Close()
+
+	table, layout, err := gpt.Read(img)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	esp := table.Partitions[0]
+
+	section, err := blockdev.NewSection(img, int64(esp.FirstLBA)*int64(layout.SectorSize), esp.Bytes(layout.SectorSize))
+	if err != nil {
+		t.Fatalf("NewSection: %v", err)
+	}
+
+	boot := make([]byte, 512)
+	if _, err := section.ReadAt(boot, 0); err != nil {
+		t.Fatalf("ReadAt: %v", err)
+	}
+	if got := string(boot[0x52:0x5A]); got != "FAT32   " {
+		t.Errorf("tipo de sistema de ficheros = %q", got)
+	}
+	if boot[510] != 0x55 || boot[511] != 0xAA {
+		t.Error("falta la firma de arranque del BPB")
+	}
+	if got := string([]byte{boot[0x47], boot[0x48], boot[0x49]}); got != "EFI" {
+		t.Errorf("etiqueta de volumen = %q", got)
+	}
+}
+
+func TestPartitionCanSkipESPFormat(t *testing.T) {
+	app, _, errBuf := newTestApp(windisk.Inventory{})
+	path := filepath.Join(t.TempDir(), "test.img")
+
+	// Con --format-esp=false cabe una ESP diminuta: solo se escribe la tabla.
+	if code := app.Run([]string{
+		"partition", "--image", path, "--size", "8MiB", "--esp", "1MiB", "--format-esp=false",
+	}); code != exitOK {
+		t.Fatalf("codigo = %d, stderr: %s", code, errBuf.String())
 	}
 }

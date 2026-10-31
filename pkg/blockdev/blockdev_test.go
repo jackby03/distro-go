@@ -286,3 +286,117 @@ func TestHumanSize(t *testing.T) {
 		}
 	}
 }
+
+func TestSectionSeesOnlyItsRange(t *testing.T) {
+	img, _ := newTestImage(t)
+
+	// Una marca fuera de la seccion y otra dentro.
+	if _, err := img.WriteAt([]byte("fuera"), 0); err != nil {
+		t.Fatalf("WriteAt: %v", err)
+	}
+	if _, err := img.WriteAt([]byte("dentro"), 1<<20); err != nil {
+		t.Fatalf("WriteAt: %v", err)
+	}
+
+	sec, err := NewSection(img, 1<<20, 2<<20)
+	if err != nil {
+		t.Fatalf("NewSection: %v", err)
+	}
+	if got := sec.Size(); got != 2<<20 {
+		t.Fatalf("Size = %d", got)
+	}
+	if got := sec.Offset(); got != 1<<20 {
+		t.Fatalf("Offset = %d", got)
+	}
+	if got := sec.SectorSize(); got != img.SectorSize() {
+		t.Fatalf("SectorSize = %d", got)
+	}
+
+	got := make([]byte, 6)
+	if _, err := sec.ReadAt(got, 0); err != nil {
+		t.Fatalf("ReadAt: %v", err)
+	}
+	if string(got) != "dentro" {
+		t.Fatalf("la seccion lee %q, se esperaba \"dentro\"", got)
+	}
+
+	// Escribir en la seccion tiene que caer en el dispositivo desplazado.
+	if _, err := sec.WriteAt([]byte("SECCION"), 512); err != nil {
+		t.Fatalf("WriteAt en la seccion: %v", err)
+	}
+	back := make([]byte, 7)
+	if _, err := img.ReadAt(back, (1<<20)+512); err != nil {
+		t.Fatalf("ReadAt en el dispositivo: %v", err)
+	}
+	if string(back) != "SECCION" {
+		t.Fatalf("el dispositivo tiene %q", back)
+	}
+}
+
+func TestSectionBounds(t *testing.T) {
+	img, _ := newTestImage(t)
+
+	for _, c := range []struct {
+		name   string
+		offset int64
+		size   int64
+	}{
+		{"offset negativo", -1, 1024},
+		{"tamano cero", 0, 0},
+		{"pasa del final", testSize - 512, 1024},
+		{"offset pasado", testSize, 512},
+	} {
+		if _, err := NewSection(img, c.offset, c.size); !errors.Is(err, ErrSectionRange) {
+			t.Errorf("%s: error = %v, se esperaba ErrSectionRange", c.name, err)
+		}
+	}
+
+	sec, err := NewSection(img, 0, 1024)
+	if err != nil {
+		t.Fatalf("NewSection: %v", err)
+	}
+	if _, err := sec.WriteAt(make([]byte, 8), 1020); !errors.Is(err, ErrOutOfRange) {
+		t.Errorf("escribir fuera de la seccion: error = %v, se esperaba ErrOutOfRange", err)
+	}
+
+	buf := make([]byte, 8)
+	if _, err := sec.ReadAt(buf, 1020); !errors.Is(err, io.EOF) {
+		t.Errorf("leer fuera de la seccion: error = %v, se esperaba io.EOF", err)
+	}
+}
+
+func TestSectionDoesNotCloseUnderlying(t *testing.T) {
+	img, _ := newTestImage(t)
+	sec, err := NewSection(img, 0, 4096)
+	if err != nil {
+		t.Fatalf("NewSection: %v", err)
+	}
+
+	if err := sec.Close(); err != nil {
+		t.Fatalf("Close de la seccion: %v", err)
+	}
+	if _, err := img.ReadAt(make([]byte, 4), 0); err != nil {
+		t.Fatalf("el dispositivo deberia seguir abierto: %v", err)
+	}
+}
+
+func TestSectionOnReadOnlyImageRejectsWrites(t *testing.T) {
+	img, path := newTestImage(t)
+	if err := img.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	ro, err := OpenImage(path, false)
+	if err != nil {
+		t.Fatalf("OpenImage: %v", err)
+	}
+	defer ro.Close()
+
+	sec, err := NewSection(ro, 0, 4096)
+	if err != nil {
+		t.Fatalf("NewSection: %v", err)
+	}
+	if _, err := sec.WriteAt([]byte("x"), 0); !errors.Is(err, ErrNotWritable) {
+		t.Fatalf("error = %v, se esperaba ErrNotWritable", err)
+	}
+}

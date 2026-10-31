@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"distrogo/pkg/blockdev"
+	"distrogo/pkg/fat32"
 	"distrogo/pkg/gpt"
 )
 
@@ -22,6 +23,7 @@ func (a *App) runPartition(args []string) int {
 	sizeFlag := fs.String("size", "8GiB", "tamano de la imagen")
 	espFlag := fs.String("esp", "512MiB", "tamano de la particion EFI")
 	force := fs.Bool("force", false, "sobrescribir la imagen si ya existe")
+	formatESP := fs.Bool("format-esp", true, "formatear la particion EFI en FAT32")
 
 	if err := fs.Parse(args); err != nil {
 		return exitUsage
@@ -100,11 +102,31 @@ func (a *App) runPartition(args []string) int {
 		return exitError
 	}
 
-	a.writePartitionSummary(*imagePath, size, img.SectorSize(), layout, table)
+	// La ESP es una particion, asi que se formatea a traves de una vista
+	// recortada del dispositivo. Es el mismo camino que usara el root en M5.
+	var espInfo *fat32.Info
+	if *formatESP {
+		esp := table.Partitions[0]
+		offset := int64(esp.FirstLBA) * int64(layout.SectorSize)
+		section, secErr := blockdev.NewSection(img, offset, esp.Bytes(layout.SectorSize))
+		if secErr != nil {
+			fmt.Fprintf(a.Err, "error: preparar la ESP: %v\n", secErr)
+			return exitError
+		}
+		vol, fmtErr := fat32.Format(section, fat32.Options{Label: "EFI"})
+		if fmtErr != nil {
+			fmt.Fprintf(a.Err, "error: formatear la ESP: %v\n", fmtErr)
+			return exitError
+		}
+		info := vol.Info()
+		espInfo = &info
+	}
+
+	a.writePartitionSummary(*imagePath, size, img.SectorSize(), layout, table, espInfo)
 	return exitOK
 }
 
-func (a *App) writePartitionSummary(path string, size int64, sectorSize int, l gpt.Layout, t *gpt.Table) {
+func (a *App) writePartitionSummary(path string, size int64, sectorSize int, l gpt.Layout, t *gpt.Table, esp *fat32.Info) {
 	fmt.Fprintf(a.Out, "imagen     : %s (%s, %d sectores de %d)\n",
 		path, blockdev.HumanSize(size), l.TotalSectors, sectorSize)
 	fmt.Fprintf(a.Out, "disco GUID : %s\n", t.DiskGUID)
@@ -114,6 +136,10 @@ func (a *App) writePartitionSummary(path string, size int64, sectorSize int, l g
 		fmt.Fprintf(a.Out, "  %d  %-4s %10s  LBA %d..%d  %s  %s\n",
 			i+1, p.Name, blockdev.HumanSize(p.Bytes(sectorSize)),
 			p.FirstLBA, p.LastLBA, p.Type, p.Unique)
+	}
+	if esp != nil {
+		fmt.Fprintf(a.Out, "ESP        : FAT32, cluster de %d bytes, %d clusters, etiqueta %s\n",
+			esp.ClusterSize, esp.Clusters, esp.Label)
 	}
 	fmt.Fprintln(a.Out, "verificado  : firma, CRC de cabecera y CRC de entradas correctos")
 }

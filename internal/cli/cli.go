@@ -114,6 +114,7 @@ Flags de partition:
   --size    tamano de la imagen, por defecto 8GiB
   --esp     tamano de la particion EFI, por defecto 512MiB
   --force   sobrescribir la imagen si ya existe
+  --format-esp  formatear la particion EFI en FAT32 (por defecto si)
 
 El comando install llega en M6. Hasta entonces, todo se valida contra imagenes.
 `)
