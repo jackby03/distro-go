@@ -98,229 +98,35 @@ func (a *App) runPartition(args []string) int {
 		return exitError
 	}
 
-	entries, err := gpt.Plan(layout, []gpt.SizeSpec{
-		{Name: "ESP", Type: gpt.TypeESP, SizeBytes: espSize},
-		{Name: "root", Type: gpt.TypeLinuxFilesystem},
-	})
-	if err != nil {
-		fmt.Fprintf(a.Err, "error: repartir: %v\n", err)
-		return exitError
+	opts := partitionOptions{
+		espSize:       espSize,
+		formatESP:     *formatESP,
+		formatRoot:    *formatRoot,
+		populate:      *populate,
+		install:       *install,
+		bootFrom:      *bootFrom,
+		withSquashfs:  *withSquashfs,
+		kernelArgs:    *kernelArgs,
+		title:         *title,
+		fallbackTitle: "DistroGo - " + *imagePath,
+		userName:      *userName,
+		userUID:       *userUID,
+		passwordHash:  *passwordHash,
 	}
 
-	table, err := gpt.NewTable(gpt.GUID{}, entries)
+	res, err := a.applyPartition(img, layout, opts)
 	if err != nil {
 		fmt.Fprintf(a.Err, "error: %v\n", err)
 		return exitError
 	}
 
-	if err := gpt.Commit(img, table, layout); err != nil {
-		fmt.Fprintf(a.Err, "error: escribir la tabla GPT: %v\n", err)
-		return exitError
-	}
+	a.writePartitionSummary(*imagePath, size, img.SectorSize(), layout, res.table,
+		res.espInfo, res.espContent, res.rootInfo, res.rootStats)
 
-	// Verificacion con nuestro propio lector: si algo no cuadra, mejor saberlo
-	// aqui que en el invitado de QEMU.
-	back, _, err := gpt.Read(img)
-	if err != nil {
-		fmt.Fprintf(a.Err, "error: verificar la tabla escrita: %v\n", err)
-		return exitError
-	}
-	if err := sameTable(table, back); err != nil {
-		fmt.Fprintf(a.Err, "error: la tabla releida no coincide: %v\n", err)
-		return exitError
-	}
-
-	// La ESP es una particion, asi que se formatea a traves de una vista
-	// recortada del dispositivo. Es el mismo camino que usara el root en M5.
-	var espInfo *fat32.Info
-	var espContent *efilayout.Result
-	var rootInfo *ext4fs.Info
-	var rootStats *rootfs.Stats
-	var accountInfo *userResult
-	var espVol *fat32.FileSystem
-	var rootVol *ext4fs.FS
-
-	if *formatESP {
-		esp := table.Partitions[0]
-		offset := int64(esp.FirstLBA) * int64(layout.SectorSize)
-		a.phase("formateando la ESP (%s)", blockdev.HumanSize(esp.Bytes(layout.SectorSize)))
-		section, secErr := blockdev.NewSection(img, offset, esp.Bytes(layout.SectorSize))
-		if secErr != nil {
-			fmt.Fprintf(a.Err, "error: preparar la ESP: %v\n", secErr)
-			return exitError
-		}
-		vol, fmtErr := fat32.Format(section, fat32.Options{Label: "SYSTEM"})
-		if fmtErr != nil {
-			fmt.Fprintf(a.Err, "error: formatear la ESP: %v\n", fmtErr)
-			return exitError
-		}
-		info := vol.Info()
-		espInfo = &info
-		espVol = vol
-
-		if *bootFrom != "" {
-			res, err := a.populateESP(vol, *bootFrom, *withSquashfs, *kernelArgs, *install)
-			if err != nil {
-				fmt.Fprintf(a.Err, "error: %v\n", err)
-				return exitError
-			}
-			espContent = &res
-		}
-
-		// El volumen se cierra al final: una instalacion real todavia tiene que
-		// copiarle el kernel y el initrd.
-		if !*install {
-			if err := vol.Close(); err != nil {
-				fmt.Fprintf(a.Err, "error: cerrar la ESP: %v\n", err)
-				return exitError
-			}
-			espVol = nil
-		}
-	}
-
-	if *formatRoot {
-		root := table.Partitions[1]
-		offset := int64(root.FirstLBA) * int64(layout.SectorSize)
-		rootSize := root.Bytes(layout.SectorSize)
-
-		// Si se va a volcar el arbol, el numero de inodos sale del squashfs: la
-		// ratio por defecto se queda corta con un rootfs de distro real.
-		var inodes uint32
-		var src *squashfs.FS
-		if *populate {
-			if *bootFrom == "" {
-				fmt.Fprintln(a.Err, "error: --populate necesita --boot-from")
-				return exitUsage
-			}
-			var err error
-			var srcISO *linuxiso.ISO
-			src, srcISO, err = openSquashfs(*bootFrom)
-			if err != nil {
-				fmt.Fprintf(a.Err, "error: %v\n", err)
-				return exitError
-			}
-			// El squashfs lee del ISO: hay que mantenerlo abierto hasta el final.
-			defer func() { _ = srcISO.Close() }()
-			info := src.Info()
-			// Un 10 por ciento de margen para lo que el arbol no cuenta: lost+found,
-			// ficheros generados al primer arranque y demas.
-			inodes = info.Inodes + info.Inodes/10 + 1024
-			fmt.Fprintf(a.Err, "rootfs     : %d inodos en el squashfs, se reservan %d\n", info.Inodes, inodes)
-		}
-
-		vol, err := ext4fs.Format(img, offset, rootSize, ext4fs.Options{
-			Label:      "distrogo-root",
-			InodeCount: inodes,
-		})
-		if err != nil {
-			fmt.Fprintf(a.Err, "error: formatear el root: %v\n", err)
-			return exitError
-		}
-
-		if *populate {
-			a.phase("volcando el rootfs del ISO en la particion root")
-			started := time.Now()
-			expected := int64(src.Info().Inodes)
-
-			stats, err := rootfs.Populate(src, vol.Target(), rootfs.PopulateOptions{
-				TolerateUnsupported: true,
-				Progress: func(st rootfs.Stats, current string) {
-					done := st.Dirs + st.Files + st.Symlinks + st.Devices
-					elapsed := time.Since(started)
-
-					rate := 0.0
-					if elapsed > 0 {
-						rate = float64(done) / elapsed.Seconds()
-					}
-					eta := "-"
-					if rate > 0 && expected > done {
-						eta = time.Duration(float64(expected-done) / rate * float64(time.Second)).Round(time.Second).String()
-					}
-
-					fmt.Fprintf(a.Err, "\r[%s] %d/%d entradas · %.0f/s · quedan %s · %s        ",
-						time.Now().Format("15:04:05"), done, expected, rate, eta, current)
-				},
-			})
-			fmt.Fprintln(a.Err)
-			if err != nil {
-				fmt.Fprintf(a.Err, "error: volcar el rootfs: %v\n", err)
-				return exitError
-			}
-			rootStats = &stats
-			a.phase("rootfs volcado: %d dirs, %d ficheros, %d symlinks, %s en %s",
-				stats.Dirs, stats.Files, stats.Symlinks,
-				blockdev.HumanSize(stats.Bytes), time.Since(started).Round(time.Second))
-		}
-
-		rootVol = vol
-
-		// El UUID del root hace falta para el grub.cfg y el fstab.
-		rootNow, infoErr := vol.Info()
-		if infoErr != nil {
-			fmt.Fprintf(a.Err, "error: leer el root: %v\n", infoErr)
-			return exitError
-		}
-		a.phase("root formateado: ext4, %d inodos, UUID %s", rootNow.InodeCount, rootNow.UUID)
-
-		if *install {
-			if espVol == nil {
-				fmt.Fprintln(a.Err, "error: --install necesita la ESP formateada")
-				return exitError
-			}
-			a.phase("instalando el arranque en el ESP")
-			label := *title
-			if label == "" {
-				label = defaultTitle(rootVol, "DistroGo - "+*imagePath)
-			}
-			res, err := a.installTarget(espVol, rootVol, *espInfo, rootNow, label)
-			if err != nil {
-				fmt.Fprintf(a.Err, "error: instalar el arranque: %v\n", err)
-				return exitError
-			}
-			espContent = &res
-
-			if *userName != "" {
-				account, err := a.buildAccount(*userName, *userUID, *passwordHash)
-				if err != nil {
-					fmt.Fprintf(a.Err, "error: preparar la cuenta: %v\n", err)
-					return exitError
-				}
-
-				a.phase("creando la cuenta %s en el sistema instalado", account.Name)
-				created, err := a.createUser(rootVol, account)
-				if err != nil {
-					fmt.Fprintf(a.Err, "error: crear la cuenta: %v\n", err)
-					return exitError
-				}
-				accountInfo = &created
-			}
-		}
-
-		info, err := vol.Info()
-		if err != nil {
-			fmt.Fprintf(a.Err, "error: leer el root: %v\n", err)
-			return exitError
-		}
-		if err := vol.Close(); err != nil {
-			fmt.Fprintf(a.Err, "error: cerrar el root: %v\n", err)
-			return exitError
-		}
-		rootVol = nil
-		rootInfo = &info
-	}
-
-	if espVol != nil {
-		if err := espVol.Close(); err != nil {
-			fmt.Fprintf(a.Err, "error: cerrar la ESP: %v\n", err)
-			return exitError
-		}
-	}
-
-	a.writePartitionSummary(*imagePath, size, img.SectorSize(), layout, table, espInfo, espContent, rootInfo, rootStats)
-
-	if accountInfo != nil {
-		fmt.Fprintf(a.Out, "cuenta     : %s (uid %d), home %s, grupo %s, %d ficheros de skel\n",
-			accountInfo.User, accountInfo.UID, accountInfo.Home, accountInfo.AdminGroup, accountInfo.HomeFiles)
+	if res.accountInfo != nil {
+		fmt.Fprintf(a.Out, "cuenta     : %s (uid %d), home %s, grupo %s, %d ficheros de skel, %d entradas del home a su nombre\n",
+			res.accountInfo.User, res.accountInfo.UID, res.accountInfo.Home,
+			res.accountInfo.AdminGroup, res.accountInfo.HomeFiles, res.accountInfo.HomeOwned)
 	}
 	return exitOK
 }

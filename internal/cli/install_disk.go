@@ -26,7 +26,14 @@ func (a *App) runInstall(args []string) int {
 	expectSerial := fs.String("expect-serial", "", "serial del disco; si no coincide no se toca nada")
 	allowNonUSB := fs.Bool("allow-non-usb", false, "aceptar un disco que no sea USB")
 	espFlag := fs.String("esp", "512MiB", "tamano de la particion EFI")
-	apply := fs.Bool("apply", false, "escribir de verdad (todavia no implementado)")
+	apply := fs.Bool("apply", false, "escribir de verdad: destruye el contenido del disco")
+	probe := fs.Bool("probe", false, "probar los IOCTL del volumen y decir cual falla, sin escribir")
+	isoPath := fs.String("iso", "", "ISO del que copiar el sistema (obligatorio con --apply)")
+	userName := fs.String("user", "", "nombre de la cuenta que se crea en el sistema instalado")
+	userUID := fs.Int("uid", 1000, "UID de esa cuenta")
+	passwordHash := fs.String("password-hash", "", "hash SHA-512 ($6$...) de la contrasena, para uso no interactivo")
+	title := fs.String("title", "", "texto del menu de arranque (por defecto, el nombre de la distro)")
+	kernelArgs := fs.String("kernel-args", "", "parametros del kernel para el arranque live del ISO")
 
 	if err := fs.Parse(args); err != nil {
 		return exitUsage
@@ -39,8 +46,12 @@ func (a *App) runInstall(args []string) int {
 		fmt.Fprintln(a.Err, "error: falta --target-disk")
 		return exitUsage
 	}
-	if *apply {
-		fmt.Fprintln(a.Err, "error: escribir en un disco fisico todavia no esta implementado; este comando solo muestra el plan")
+	if *apply && *isoPath == "" {
+		fmt.Fprintln(a.Err, "error: --apply necesita --iso")
+		return exitUsage
+	}
+	if *userName != "" && !*apply {
+		fmt.Fprintln(a.Err, "error: --user necesita --apply, la cuenta se crea en el sistema instalado")
 		return exitUsage
 	}
 
@@ -99,6 +110,34 @@ func (a *App) runInstall(args []string) int {
 		return exitError
 	}
 
+	// Diagnostico: probar cada IOCTL por separado. Sirve cuando el antivirus bloquea
+	// uno solo y no se sabe cual.
+	if *probe {
+		probes, err := windisk.ProbeDisk(int(d.Number))
+		if err != nil {
+			fmt.Fprintf(a.Err, "error: %v\n", err)
+			return exitError
+		}
+		for _, p := range probes {
+			fmt.Fprintf(a.Out, "volumen %s\n", p.Path)
+			fmt.Fprintf(a.Out, "  abrir lectura+escritura : %s\n", estadoIOCTL(p.Open))
+			fmt.Fprintf(a.Out, "  FSCTL_DISMOUNT_VOLUME   : %s\n", estadoIOCTL(p.Dismount))
+			fmt.Fprintf(a.Out, "  FSCTL_LOCK_VOLUME       : %s\n", estadoIOCTL(p.Lock))
+			// Fuera de linea solo se intenta si el bloqueo fallo, asi que si no se
+			// probo no se puede informar de un resultado que no existe.
+			if p.Lock != nil {
+				fmt.Fprintf(a.Out, "  IOCTL_VOLUME_OFFLINE    : %s\n", estadoIOCTL(p.Offline))
+				if p.Offline == nil {
+					fmt.Fprintf(a.Out, "  IOCTL_VOLUME_ONLINE     : %s\n", estadoIOCTL(p.Restore))
+				}
+			} else {
+				fmt.Fprintln(a.Out, "  IOCTL_VOLUME_OFFLINE    : no hace falta, el bloqueo basto")
+			}
+		}
+		fmt.Fprintln(a.Out, "diagnostico terminado; no se ha escrito ningun dato")
+		return exitOK
+	}
+
 	// A partir de aqui se toca el hardware, aunque solo sea para leer.
 	disk, err := windisk.OpenExclusive(int(d.Number))
 	if err != nil {
@@ -116,6 +155,23 @@ func (a *App) runInstall(args []string) int {
 	a.phase("disco %d abierto en exclusiva, %s, sectores de %d",
 		disk.Number(), blockdev.HumanSize(disk.Size()), disk.SectorSize())
 
+	if *apply {
+		return a.applyToDisk(disk, partitionOptions{
+			espSize:       espSize,
+			formatESP:     true,
+			formatRoot:    true,
+			populate:      true,
+			install:       true,
+			bootFrom:      *isoPath,
+			kernelArgs:    *kernelArgs,
+			title:         *title,
+			fallbackTitle: fmt.Sprintf("DistroGo - disco %d", d.Number),
+			userName:      *userName,
+			userUID:       *userUID,
+			passwordHash:  *passwordHash,
+		})
+	}
+
 	table, layout, err := gpt.Read(disk)
 	if err != nil {
 		a.phase("no hay una tabla GPT legible (%v): se creara una nueva", err)
@@ -131,6 +187,47 @@ func (a *App) runInstall(args []string) int {
 	}
 
 	a.phase("lectura completada; no se ha escrito nada")
+	return exitOK
+}
+
+// applyToDisk instala de verdad en un disco fisico ya abierto en exclusiva.
+//
+// Usa la misma tuberia que la instalacion sobre imagen: lo que se probo durante
+// meses contra un .img es literalmente el mismo codigo que escribe aqui.
+func (a *App) applyToDisk(disk *windisk.Disk, opts partitionOptions) int {
+	layout, err := gpt.NewLayout(disk.Size(), disk.SectorSize())
+	if err != nil {
+		fmt.Fprintf(a.Err, "error: repartir el disco: %v\n", err)
+		return exitError
+	}
+	if opts.espSize <= 0 || opts.espSize >= disk.Size() {
+		fmt.Fprintf(a.Err, "error: la ESP (%s) no cabe en el disco (%s)\n",
+			blockdev.HumanSize(opts.espSize), blockdev.HumanSize(disk.Size()))
+		return exitError
+	}
+
+	res, err := a.applyPartition(disk, layout, opts)
+	if err != nil {
+		fmt.Fprintf(a.Err, "error: %v\n", err)
+		return exitError
+	}
+
+	// Sin este volcado el "listo" seria mentira: los datos estarian en la cache de
+	// Windows y el disco se desconectaria con medio sistema dentro.
+	if err := disk.Sync(); err != nil {
+		fmt.Fprintf(a.Err, "error: %v\n", err)
+		return exitError
+	}
+
+	a.writePartitionSummary(windisk.DiskPath(disk.Number()), disk.Size(), disk.SectorSize(),
+		layout, res.table, res.espInfo, res.espContent, res.rootInfo, res.rootStats)
+	if res.accountInfo != nil {
+		fmt.Fprintf(a.Out, "cuenta     : %s (uid %d), home %s, grupo %s, %d ficheros de skel, %d entradas del home a su nombre\n",
+			res.accountInfo.User, res.accountInfo.UID, res.accountInfo.Home,
+			res.accountInfo.AdminGroup, res.accountInfo.HomeFiles, res.accountInfo.HomeOwned)
+	}
+
+	a.phase("instalacion terminada; ya se puede desconectar el disco")
 	return exitOK
 }
 
@@ -184,4 +281,12 @@ func diskNumbers(disks []blockdev.Disk) string {
 		out += fmt.Sprintf("%d", d.Number)
 	}
 	return out
+}
+
+// estadoIOCTL traduce el resultado de un IOCTL a algo legible.
+func estadoIOCTL(err error) string {
+	if err == nil {
+		return "ok"
+	}
+	return "FALLO: " + err.Error()
 }
