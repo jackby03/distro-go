@@ -83,6 +83,33 @@ Solucion adoptada: si Size es 0, crear el fichero vacio y no leer nada.
   no como los digitos octales 4000, 2000 y 1000. Un 0o4755 se acepta sin quejarse
   y no pone el setuid: el bit cae en zona muerta de os.FileMode.
 
+## Errores que no son huecos (mas peligrosos)
+
+### Remove seguido de escritura corrompe el directorio
+
+No es una funcion que falte: es una funcion que hace dano. Alternar Remove y creacion
+de ficheros en el mismo directorio reutiliza inodos de entradas vivas. Reproducido con
+tres ficheros en /etc:
+
+```
+inicial:            passwd shadow group
+ReplaceFile passwd: shadow group passwd
+ReplaceFile shadow: group shadow          (desaparecio passwd)
+ReplaceFile group:  group                 (desaparecio shadow)
+```
+
+Peor aun: haciendo todas las bajas primero y despues todas las altas, a `etc/sudoers`
+le acaba el contenido de `passwd`. Los sintomas fuera de la libreria son inodos sin
+enlace y contadores de enlace desplazados, que es exactamente lo que e2fsck reporto en
+M6 y que se atribuyo a QEMU.
+
+Solucion adoptada en pkg/ext4fs, y regla para todo lo que venga: **en ext4 no se borra
+nada para reescribir**. AppendFile para crecer (passwd, shadow) y OverwriteFile para
+sustituir sobre el mismo inodo (fstab, group), rellenando con saltos de linea si el
+contenido nuevo es mas corto porque la libreria no trunca. ReplaceFile se elimino de
+pkg/ext4fs para que nadie lo vuelva a usar. En pkg/fat32 sigue, porque su escritor es
+nuestro y el ESP de M6 quedo bien, pero queda pendiente revisarlo.
+
 ## Lo que reutilizan los milestones siguientes
 
 - pkg/rootfs (contrato Source y Target) salio de aqui y es codigo de producto.

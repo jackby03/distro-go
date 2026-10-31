@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"io"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -236,4 +237,115 @@ func TestSectionInfoIsAFile(t *testing.T) {
 	if _, err := st.Seek(-1, 0); err == nil {
 		t.Error("un seek negativo deberia fallar")
 	}
+}
+
+// TestOverwriteFileKeepsNeighboursIntact es la prueba de regresion del fallo que
+// costo la corrupcion de M6: reescribir un fichero de /etc no puede tocar a sus
+// vecinos.
+func TestOverwriteFileKeepsNeighboursIntact(t *testing.T) {
+	img := newImage(t, imageSize)
+	fs, err := Format(img, volumeOffset, volumeSize, Options{InodeCount: 4000})
+	if err != nil {
+		t.Fatalf("Format: %v", err)
+	}
+	t.Cleanup(func() { _ = fs.Close() })
+
+	vecinos := map[string]string{
+		"etc/sudoers":  "%sudo ALL=(ALL:ALL) ALL\n",
+		"etc/hostname": "mint\n",
+		"etc/shells":   "/bin/sh\n/bin/bash\n",
+		"etc/timezone": "Europe/Madrid\n",
+	}
+	for path, body := range vecinos {
+		if err := fs.WriteFile(path, strings.NewReader(body)); err != nil {
+			t.Fatalf("WriteFile %q: %v", path, err)
+		}
+	}
+	if err := fs.WriteFile("etc/group", strings.NewReader("root:x:0:\nsudo:x:27:\n")); err != nil {
+		t.Fatalf("WriteFile group: %v", err)
+	}
+
+	// Reescritura que ademas crece respecto al original.
+	nuevo := "root:x:0:\nsudo:x:27:ana\nadm:x:4:syslog\n"
+	if err := fs.OverwriteFile("etc/group", []byte(nuevo)); err != nil {
+		t.Fatalf("OverwriteFile: %v", err)
+	}
+
+	if got := leerFichero(t, fs, "etc/group"); got != nuevo {
+		t.Fatalf("group = %q, queria %q", got, nuevo)
+	}
+	for path, quiero := range vecinos {
+		if got := leerFichero(t, fs, path); got != quiero {
+			t.Fatalf("%q cambio al reescribir otro fichero: %q", path, got)
+		}
+	}
+}
+
+// TestOverwriteFilePadsShorterContent comprueba el relleno cuando el contenido
+// nuevo es mas corto: go-diskfs no trunca, asi que sobran bytes al final.
+func TestOverwriteFilePadsShorterContent(t *testing.T) {
+	img := newImage(t, imageSize)
+	fs, err := Format(img, volumeOffset, volumeSize, Options{InodeCount: 4000})
+	if err != nil {
+		t.Fatalf("Format: %v", err)
+	}
+	t.Cleanup(func() { _ = fs.Close() })
+
+	largo := "# fstab de la distro, con varias lineas\n# y mas texto de relleno\nUUID=viejo / ext4 defaults 0 1\n"
+	if err := fs.WriteFile("etc/fstab", strings.NewReader(largo)); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	corto := "UUID=nuevo / ext4 errors=remount-ro 0 1\n"
+	if err := fs.OverwriteFile("etc/fstab", []byte(corto)); err != nil {
+		t.Fatalf("OverwriteFile: %v", err)
+	}
+
+	got := leerFichero(t, fs, "etc/fstab")
+	if !strings.HasPrefix(got, corto) {
+		t.Fatalf("no empieza por el contenido nuevo: %q", got)
+	}
+	// Lo que sobra solo pueden ser saltos de linea: cualquier otra cosa seria
+	// basura del contenido anterior.
+	if resto := strings.TrimPrefix(got, corto); strings.Trim(resto, "\n") != "" {
+		t.Fatalf("quedo basura del contenido anterior: %q", resto)
+	}
+}
+
+// TestAppendFileKeepsContent comprueba que anadir no toca lo que ya habia.
+func TestAppendFileKeepsContent(t *testing.T) {
+	img := newImage(t, imageSize)
+	fs, err := Format(img, volumeOffset, volumeSize, Options{InodeCount: 4000})
+	if err != nil {
+		t.Fatalf("Format: %v", err)
+	}
+	t.Cleanup(func() { _ = fs.Close() })
+
+	if err := fs.WriteFile("etc/passwd", strings.NewReader("root:x:0:0:root:/root:/bin/bash")); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	if err := fs.AppendFile("etc/passwd", []byte("\nana:x:1000:1000::/home/ana:/bin/bash\n")); err != nil {
+		t.Fatalf("AppendFile: %v", err)
+	}
+
+	quiero := "root:x:0:0:root:/root:/bin/bash\nana:x:1000:1000::/home/ana:/bin/bash\n"
+	if got := leerFichero(t, fs, "etc/passwd"); got != quiero {
+		t.Fatalf("passwd = %q, queria %q", got, quiero)
+	}
+}
+
+func leerFichero(t *testing.T, fs *FS, path string) string {
+	t.Helper()
+	rc, _, err := fs.OpenFile(path)
+	if err != nil {
+		t.Fatalf("abrir %q: %v", path, err)
+	}
+	defer rc.Close()
+
+	body, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatalf("leer %q: %v", path, err)
+	}
+	return string(body)
 }

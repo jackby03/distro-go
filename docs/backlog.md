@@ -240,3 +240,15 @@ Los milestones estan en roadmap.md.
     fallo del volcado: es una capacidad que le falta al producto. Va a M6.5.
   - Decision pendiente: cuenta por parametros o creacion en el primer arranque.
   - Cierre: `partition --install` deja una cuenta usable, con home y sudo.
+
+- [ ] DG-31 — go-diskfs corrompe el directorio al borrar y recrear (M6.5).
+  - Alternar `Remove` y creacion en el mismo directorio reutiliza inodos de
+    entradas vivas: el segundo fichero reescrito se lleva por delante a otro, y en
+    el peor caso un fichero acaba con el contenido de otro.
+  - Es la causa probable de los inodos sin enlace que e2fsck corrigio en M6, no
+    la escritura con QEMU abierta.
+  - Mitigado: `AppendFile` y `OverwriteFile` en pkg/ext4fs, y `ReplaceFile`
+    eliminado. `pkg/fat32.ReplaceFile` sigue igual y hay que revisarlo.
+  - Cierre: ninguna ruta de codigo usa Remove sobre ext4; y si algun dia hace
+    falta borrar, comprobarlo con e2fsck en QEMU sobre un arbol de cientos de
+    entradas.
