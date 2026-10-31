@@ -391,3 +391,82 @@ func TestPartitionRequiresInstallForUser(t *testing.T) {
 		t.Fatalf("no explico el motivo: %q", app.Err.(*bytes.Buffer).String())
 	}
 }
+
+func TestPrettyNameReadsOsRelease(t *testing.T) {
+	casos := map[string]string{
+		// Mint y Fedora suelen entrecomillar.
+		"NAME=\"Linux Mint\"\nPRETTY_NAME=\"Linux Mint 22.3 (Xfce)\"\nID=linuxmint\n": "Linux Mint 22.3 (Xfce)",
+		// Debian tambien.
+		"PRETTY_NAME=\"Debian GNU/Linux 13 (trixie)\"\n": "Debian GNU/Linux 13 (trixie)",
+		// Con comillas simples, que tambien es valido.
+		"PRETTY_NAME='Arch Linux'\n": "Arch Linux",
+		// Sin comillas.
+		"PRETTY_NAME=Alpine\n": "Alpine",
+		// Sin PRETTY_NAME: hay que caer al valor por defecto.
+		"NAME=\"Algo\"\nID=algo\n": "",
+	}
+
+	for osRelease, quiere := range casos {
+		root := newUserFS(t)
+		if err := root.OverwriteFile("etc/os-release", []byte(osRelease)); err != nil {
+			t.Fatalf("OverwriteFile: %v", err)
+		}
+		if got := prettyName(root); got != quiere {
+			t.Errorf("%q: prettyName = %q, queria %q", osRelease, got, quiere)
+		}
+	}
+}
+
+func TestDefaultTitleFallsBackWhenOsReleaseIsMissing(t *testing.T) {
+	root := newUserFS(t)
+
+	// newUserFS no escribe os-release.
+	if got := defaultTitle(root, "DistroGo - out/test.img"); got != "DistroGo - out/test.img" {
+		t.Fatalf("sin os-release = %q, queria el valor por defecto", got)
+	}
+
+	if err := root.OverwriteFile("etc/os-release", []byte("PRETTY_NAME=\"Linux Mint 22.3 (Xfce)\"\n")); err != nil {
+		t.Fatalf("OverwriteFile: %v", err)
+	}
+	if got := defaultTitle(root, "DistroGo - out/test.img"); got != "Linux Mint 22.3 (Xfce)" {
+		t.Fatalf("con os-release = %q", got)
+	}
+}
+
+func TestInstallTargetUsesDistroNameWhenNoTitle(t *testing.T) {
+	root := newUserFS(t)
+	if err := root.OverwriteFile("etc/os-release", []byte("PRETTY_NAME=\"Linux Mint 22.3 (Xfce)\"\n")); err != nil {
+		t.Fatalf("OverwriteFile: %v", err)
+	}
+	if err := root.WriteFile("boot/vmlinuz-9.9.9-test", strings.NewReader("kernel")); err != nil {
+		t.Fatalf("WriteFile kernel: %v", err)
+	}
+	if err := root.WriteFile("boot/initrd.img-9.9.9-test", strings.NewReader("initrd")); err != nil {
+		t.Fatalf("WriteFile initrd: %v", err)
+	}
+
+	img, err := blockdev.CreateImage(filepath.Join(t.TempDir(), "esp.img"), 48<<20)
+	if err != nil {
+		t.Fatalf("CreateImage: %v", err)
+	}
+	defer img.Close()
+	esp, err := fat32.Format(img, fat32.Options{Label: "SYSTEM"})
+	if err != nil {
+		t.Fatalf("fat32.Format: %v", err)
+	}
+
+	rootInfo, err := root.Info()
+	if err != nil {
+		t.Fatalf("Info: %v", err)
+	}
+
+	app := &App{Out: &bytes.Buffer{}, Err: &bytes.Buffer{}}
+	if _, err := app.installTarget(esp, root, esp.Info(), rootInfo, defaultTitle(root, "DistroGo - out/test.img")); err != nil {
+		t.Fatalf("installTarget: %v", err)
+	}
+
+	cfg := readText(t, esp.OpenFile, "boot/grub/grub.cfg")
+	if !strings.Contains(cfg, "Linux Mint 22.3 (Xfce)") {
+		t.Fatalf("el menu no lleva el nombre de la distro:\n%s", cfg)
+	}
+}

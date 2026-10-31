@@ -134,19 +134,19 @@ func (a *App) createUser(root *ext4fs.FS, u accounts.User) (userResult, error) {
 	res.UID = u.UID
 	res.Home = u.Home
 
-	passwd, err := readAccountFile(root, "etc/passwd")
+	passwd, err := readSmallFile(root, "etc/passwd")
 	if err != nil {
 		return res, err
 	}
-	group, err := readAccountFile(root, "etc/group")
+	group, err := readSmallFile(root, "etc/group")
 	if err != nil {
 		return res, err
 	}
-	shadow, err := readAccountFile(root, "etc/shadow")
+	shadow, err := readSmallFile(root, "etc/shadow")
 	if err != nil {
 		return res, err
 	}
-	sudoers, err := readAccountFile(root, "etc/sudoers")
+	sudoers, err := readSmallFile(root, "etc/sudoers")
 	if err != nil {
 		return res, err
 	}
@@ -229,8 +229,8 @@ func (a *App) createUser(root *ext4fs.FS, u accounts.User) (userResult, error) {
 	return res, nil
 }
 
-// readAccountFile lee un fichero de cuentas del volumen, con tope de tamano.
-func readAccountFile(root *ext4fs.FS, path string) (string, error) {
+// readSmallFile lee del volumen un fichero pequeno, con tope de tamano.
+func readSmallFile(root *ext4fs.FS, path string) (string, error) {
 	rc, size, err := root.OpenFile(path)
 	if err != nil {
 		return "", fmt.Errorf("leer %q: %w", path, err)
@@ -322,4 +322,42 @@ func (a *App) buildAccount(name string, uid int, hash string) (accounts.User, er
 	}
 	u.Password = hashed
 	return u, nil
+}
+
+// defaultTitle propone el nombre del menu de arranque a partir de la propia
+// distro, para no tener que pasar --title.
+func defaultTitle(root *ext4fs.FS, fallback string) string {
+	if nombre := prettyName(root); nombre != "" {
+		return nombre
+	}
+	return fallback
+}
+
+// prettyName saca PRETTY_NAME de /etc/os-release.
+//
+// Es el nombre que el usuario reconoce: "Linux Mint 22.3 (Xfce)",
+// "Debian GNU/Linux 13 (trixie)". Devuelve vacio si no esta o no se puede leer,
+// porque un fallo aqui no puede impedir una instalacion.
+func prettyName(root *ext4fs.FS) string {
+	content, err := readSmallFile(root, "etc/os-release")
+	if err != nil {
+		return ""
+	}
+
+	for _, line := range strings.Split(content, "\n") {
+		valor, ok := strings.CutPrefix(strings.TrimSpace(line), "PRETTY_NAME=")
+		if !ok {
+			continue
+		}
+		// Puede venir entre comillas dobles o simples.
+		valor = strings.TrimSpace(valor)
+		if len(valor) >= 2 {
+			if (valor[0] == '"' && valor[len(valor)-1] == '"') ||
+				(valor[0] == '\'' && valor[len(valor)-1] == '\'') {
+				valor = valor[1 : len(valor)-1]
+			}
+		}
+		return strings.TrimSpace(valor)
+	}
+	return ""
 }

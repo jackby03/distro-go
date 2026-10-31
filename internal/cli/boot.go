@@ -19,7 +19,7 @@ func (a *App) runBoot(args []string) int {
 	fs := flag.NewFlagSet("boot", flag.ContinueOnError)
 	fs.SetOutput(a.Err)
 	imagePath := fs.String("image", "", "imagen con el sistema ya instalado (obligatorio)")
-	title := fs.String("title", "DistroGo", "texto del menu de GRUB")
+	title := fs.String("title", "", "texto del menu de GRUB (por defecto, el nombre de la distro)")
 
 	if err := fs.Parse(args); err != nil {
 		return exitUsage
@@ -90,7 +90,12 @@ func (a *App) runBoot(args []string) int {
 		return exitError
 	}
 
-	res, err := a.installTarget(esp, root, esp.Info(), rootInfo, *title)
+	label := *title
+	if label == "" {
+		label = defaultTitle(root, "DistroGo")
+	}
+
+	res, err := a.installTarget(esp, root, esp.Info(), rootInfo, label)
 	if err != nil {
 		fmt.Fprintf(a.Err, "error: instalar el arranque: %v\n", err)
 		return exitError

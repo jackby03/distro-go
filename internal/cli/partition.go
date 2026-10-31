@@ -33,7 +33,7 @@ func (a *App) runPartition(args []string) int {
 	formatRoot := fs.Bool("format-root", true, "formatear la particion root en ext4")
 	populate := fs.Bool("populate", false, "volcar el rootfs del ISO en la particion root")
 	install := fs.Bool("install", false, "dejar el disco arrancando el sistema instalado (implica --populate)")
-	title := fs.String("title", "", "etiqueta del menu de arranque (por defecto, DistroGo - <imagen>)")
+	title := fs.String("title", "", "texto del menu de arranque (por defecto, el nombre de la distro)")
 	bootFrom := fs.String("boot-from", "", "ISO del que copiar el arranque al ESP")
 	withSquashfs := fs.Bool("with-squashfs", false, "copiar tambien el rootfs comprimido al ESP")
 	kernelArgs := fs.String("kernel-args", "", "parametros de arranque del kernel, separados por espacios")
@@ -270,7 +270,7 @@ func (a *App) runPartition(args []string) int {
 			a.phase("instalando el arranque en el ESP")
 			label := *title
 			if label == "" {
-				label = "DistroGo - " + *imagePath
+				label = defaultTitle(rootVol, "DistroGo - "+*imagePath)
 			}
 			res, err := a.installTarget(espVol, rootVol, *espInfo, rootNow, label)
 			if err != nil {
