@@ -44,6 +44,8 @@ func (a *App) Run(args []string) int {
 		return a.runPartition(args[1:])
 	case "boot":
 		return a.runBoot(args[1:])
+	case "install":
+		return a.runInstall(args[1:])
 	case "help", "-h", "--help":
 		a.printUsage()
 		return exitOK
