@@ -46,6 +46,14 @@ No se re-discuten sin abrir un DG-xx que lo justifique.
   crea swap: el dispositivo se degrada y el intercambio es lentisimo, asi que el
   sistema trabaja solo con RAM. En disco interno (SATA, NVMe) si tiene sentido.
   Hoy no se crea swap en ningun caso; implementarlo es de M9.
+- Camino a hardware: construir la imagen entera con `partition` y copiarla con
+  `flash` en secuencia. Escribir el sistema de ficheros directamente sobre el disco
+  se midio en 0,6 entradas/s en un HDD por USB, porque cada fichero son decenas de
+  accesos aleatorios y Windows no cachea escrituras en discos extraibles. La imagen
+  se construye donde lo aleatorio es barato.
+- Antivirus: Defender bloquea `FSCTL_LOCK_VOLUME` e `IOCTL_VOLUME_OFFLINE` en
+  procesos sin reputacion. Requisito documentado para el PoC: exclusion de proceso
+  para `distrogo.exe`. La version estable necesita firma de codigo (DG-32).
 - Politica de disco: solo bloquea el disco del sistema (IsSystem/IsBoot o que aloje
   C:), el dispositivo de solo lectura y el disco sin serial o sin tamano. Tener
   volumenes montados o particiones no bloquea: se avisa de lo que se pierde. La

@@ -15,7 +15,7 @@ func mounted(mount, label, fs string) *blockdev.Volume {
 func usbDisk(number uint32, serial string) blockdev.Disk {
 	return blockdev.Disk{
 		Number:         number,
-		Model:          "External USB3.0",
+		Model:          "USB3.0 externo",
 		Serial:         serial,
 		Bus:            blockdev.BusUSB,
 		SizeBytes:      465 * 1 << 30,
@@ -25,7 +25,7 @@ func usbDisk(number uint32, serial string) blockdev.Disk {
 }
 
 func TestAssessBlankUSBDiskIsEligible(t *testing.T) {
-	v := Assess(usbDisk(3, "201703310007F"), Options{})
+	v := Assess(usbDisk(3, "SN-PRUEBAS-0001"), Options{})
 
 	if !v.Eligible {
 		t.Fatalf("un disco USB vacio deberia ser elegible, bloqueos: %v", v.Reasons)
@@ -145,17 +145,17 @@ func TestAssessRefusesReadOnlyNoSerialAndNoSize(t *testing.T) {
 }
 
 func TestAuthorizeHappyPath(t *testing.T) {
-	d := usbDisk(3, "201703310007F")
+	d := usbDisk(3, "SN-PRUEBAS-0001")
 
-	if err := Authorize(d, Request{DiskNumber: 3, ExpectSerial: "201703310007F"}); err != nil {
+	if err := Authorize(d, Request{DiskNumber: 3, ExpectSerial: "SN-PRUEBAS-0001"}); err != nil {
 		t.Fatalf("Authorize: %v", err)
 	}
 }
 
 func TestAuthorizeIsCaseInsensitiveOnSerial(t *testing.T) {
-	d := usbDisk(3, "201703310007F")
+	d := usbDisk(3, "SN-PRUEBAS-0001")
 
-	if err := Authorize(d, Request{DiskNumber: 3, ExpectSerial: "201703310007f"}); err != nil {
+	if err := Authorize(d, Request{DiskNumber: 3, ExpectSerial: "sn-pruebas-0001"}); err != nil {
 		t.Fatalf("el serial deberia compararse sin distinguir mayusculas: %v", err)
 	}
 }
@@ -164,18 +164,18 @@ func TestAuthorizeIsCaseInsensitiveOnSerial(t *testing.T) {
 // disco tiene datos, se escribe igual. Lo que no se permite es escribir sin
 // haber confirmado la identidad.
 func TestAuthorizeAllowsDestructiveWrite(t *testing.T) {
-	d := usbDisk(2, "20171202002528F")
-	d.Partitions = []blockdev.Partition{{Number: 1, Volume: mounted(`F:\`, "DD JACK", "NTFS")}}
+	d := usbDisk(2, "SN-DATOS-0001")
+	d.Partitions = []blockdev.Partition{{Number: 1, Volume: mounted(`F:\`, "DATOS", "NTFS")}}
 
-	if err := Authorize(d, Request{DiskNumber: 2, ExpectSerial: "20171202002528F"}); err != nil {
+	if err := Authorize(d, Request{DiskNumber: 2, ExpectSerial: "SN-DATOS-0001"}); err != nil {
 		t.Fatalf("un disco con datos deberia permitirse confirmando serial: %v", err)
 	}
 }
 
 func TestAuthorizeRefusesWrongSerial(t *testing.T) {
-	d := usbDisk(2, "20171202002528F")
+	d := usbDisk(2, "SN-DATOS-0001")
 
-	err := Authorize(d, Request{DiskNumber: 2, ExpectSerial: "201703310007F"})
+	err := Authorize(d, Request{DiskNumber: 2, ExpectSerial: "SN-PRUEBAS-0001"})
 	if !errors.Is(err, ErrRefused) {
 		t.Fatalf("error = %v, se esperaba ErrRefused", err)
 	}
@@ -185,7 +185,7 @@ func TestAuthorizeRefusesWrongSerial(t *testing.T) {
 }
 
 func TestAuthorizeRequiresExpectedSerial(t *testing.T) {
-	d := usbDisk(3, "201703310007F")
+	d := usbDisk(3, "SN-PRUEBAS-0001")
 
 	err := Authorize(d, Request{DiskNumber: 3})
 	if !errors.Is(err, ErrRefused) {
@@ -197,10 +197,10 @@ func TestAuthorizeRequiresExpectedSerial(t *testing.T) {
 }
 
 func TestAuthorizeStillRefusesSystemDiskWithCorrectSerial(t *testing.T) {
-	d := usbDisk(1, "P300DBBA")
+	d := usbDisk(1, "SN-NVME-0001")
 	d.IsSystem = true
 
-	err := Authorize(d, Request{DiskNumber: 1, ExpectSerial: "P300DBBA"})
+	err := Authorize(d, Request{DiskNumber: 1, ExpectSerial: "SN-NVME-0001"})
 	if !errors.Is(err, ErrRefused) {
 		t.Fatalf("error = %v, se esperaba ErrRefused", err)
 	}
@@ -229,12 +229,12 @@ func TestAuthorizeRejectsMismatchedDiskNumber(t *testing.T) {
 func TestDevelopmentMachineOnlySystemDiskIsBlocked(t *testing.T) {
 	disks := []blockdev.Disk{
 		{
-			Number: 0, Model: "KINGSTON SA400S37480G", Serial: "50026B77837DB62E",
+			Number: 0, Model: "SSD SATA 480GB", Serial: "SN-SATA-0001",
 			Bus: blockdev.BusSATA, SizeBytes: 480103981056, LogicalSector: 512, PhysicalSector: 512,
 			Partitions: []blockdev.Partition{{Number: 1, SizeBytes: 480101003264, Volume: mounted(`D:\`, "", "NTFS")}},
 		},
 		{
-			Number: 1, Model: "Patriot M.2 P300 1024GB", Serial: "P300DBBA23072702055 _00000001.",
+			Number: 1, Model: "NVMe 1TB", Serial: "SN-NVME-0001",
 			Bus: blockdev.BusNVMe, SizeBytes: 1024209543168, LogicalSector: 512, PhysicalSector: 4096,
 			IsBoot: true, IsSystem: true,
 			Partitions: []blockdev.Partition{
@@ -245,12 +245,12 @@ func TestDevelopmentMachineOnlySystemDiskIsBlocked(t *testing.T) {
 			},
 		},
 		{
-			Number: 2, Model: "TOSHIBA External USB 3.0", Serial: "20171202002528F",
+			Number: 2, Model: "USB externo 1TB", Serial: "SN-DATOS-0001",
 			Bus: blockdev.BusUSB, SizeBytes: 1000204883968, LogicalSector: 512, PhysicalSector: 4096,
-			Partitions: []blockdev.Partition{{Number: 1, SizeBytes: 1000202043392, Volume: mounted(`F:\`, "DD JACK", "NTFS")}},
+			Partitions: []blockdev.Partition{{Number: 1, SizeBytes: 1000202043392, Volume: mounted(`F:\`, "DATOS", "NTFS")}},
 		},
 		{
-			Number: 3, Model: "External USB3.0", Serial: "201703310007F",
+			Number: 3, Model: "USB3.0 externo", Serial: "SN-PRUEBAS-0001",
 			Bus: blockdev.BusUSB, SizeBytes: 500107862016, LogicalSector: 512, PhysicalSector: 4096,
 			Partitions: []blockdev.Partition{{Number: 1, SizeBytes: 500105216000, Volume: mounted(`E:\`, "New Volume", "exFAT")}},
 		},

@@ -19,7 +19,7 @@ Los milestones estan en roadmap.md.
     edk2-i386-vars.fd y llega al menu de arranque de la imagen.
 
 - [ ] DG-02 — Estabilidad del serial del Disk 3 (M7). BLOQUEANTE.
-  - La allowlist del guard depende de que `201703310007F` no cambie tras replug ni tras
+  - La allowlist del guard depende de que `SN-PRUEBAS-0001` no cambie tras replug ni tras
     reiniciar. Sin verificar.
   - Cierre: el serial es identico en tres lecturas separadas por un replug fisico.
 
@@ -252,3 +252,23 @@ Los milestones estan en roadmap.md.
   - Cierre: ninguna ruta de codigo usa Remove sobre ext4; y si algun dia hace
     falta borrar, comprobarlo con e2fsck en QEMU sobre un arbol de cientos de
     entradas.
+
+- [ ] DG-32 — Defender bloquea el control del volumen (M7).
+  - Con la consola elevada, `FSCTL_LOCK_VOLUME` e `IOCTL_VOLUME_OFFLINE` devuelven
+    ACCESS_DENIED. Abrir el volumen en lectura+escritura y desmontarlo si funciona.
+  - Con una exclusion de **proceso** (`distrogo.exe`) todo pasa a ok, sin tocar la
+    configuracion del disco ni desactivar nada.
+  - Para el PoC se documenta la exclusion. Para la version estable hace falta firma
+    de codigo: un binario sin firmar que abre `\\.\PhysicalDriveN` es
+    indistinguible de un ransomware.
+  - Cierre: la documentacion de usuario explica la exclusion de proceso, y hay una
+    decision tomada sobre firmar el ejecutable.
+
+- [ ] DG-33 — Construir el sistema de ficheros sobre el disco es inviable (M7).
+  - 0,6 entradas/s en un HDD por USB en modo extraccion rapida, frente a 187/s sobre
+    NVMe. Debian sola serian 36 horas.
+  - Mitigado con `distrogo flash`: la imagen se construye aparte y se copia en
+    secuencia, que es lo que hace Rufus.
+  - Medido: `flash` de 8 GiB al HDD por USB 3.0 en 1m15s (109 MB/s), con
+    verificacion byte a byte correcta. `install --apply` queda para depurar.
+  - Cierre: el disco flasheado arranca en QEMU desde la unidad fisica.

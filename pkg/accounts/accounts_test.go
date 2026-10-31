@@ -10,18 +10,18 @@ import (
 )
 
 func cuenta(base User) User {
-	base.Name = "jack"
+	base.Name = "demo"
 	base.UID = 1000
 	base.GID = 1000
-	base.Home = "/home/jack"
+	base.Home = "/home/demo"
 	base.Shell = "/bin/bash"
-	base.Gecos = "Jack Daniels"
+	base.Gecos = "Demo Daniels"
 	base.Password = "$6$salt$hash"
 	return base
 }
 
 func TestNewDerivesHomeFromUserName(t *testing.T) {
-	for _, nombre := range []string{"jack", "ana", "maria", "dev", "usuario_largo-1"} {
+	for _, nombre := range []string{"demo", "ana", "maria", "dev", "usuario_largo-1"} {
 		u, err := New(nombre, 1000)
 		if err != nil {
 			t.Fatalf("%s: error inesperado: %v", nombre, err)
@@ -62,7 +62,7 @@ func TestNewTwoUsersDoNotShareHome(t *testing.T) {
 }
 
 func TestNewHasPrivateGroupAndNoExtraGroups(t *testing.T) {
-	u, err := New("jack", 1000)
+	u, err := New("demo", 1000)
 	if err != nil {
 		t.Fatalf("error inesperado: %v", err)
 	}
@@ -77,7 +77,7 @@ func TestNewHasPrivateGroupAndNoExtraGroups(t *testing.T) {
 }
 
 func TestNewRejectsInvalidName(t *testing.T) {
-	for _, nombre := range []string{"", "Jack", "con espacio", "con:dos", "1numero"} {
+	for _, nombre := range []string{"", "Demo", "con espacio", "con:dos", "1numero"} {
 		if _, err := New(nombre, 1000); !errors.Is(err, ErrInvalidUser) {
 			t.Errorf("%q: err = %v, queria ErrInvalidUser", nombre, err)
 		}
@@ -131,7 +131,7 @@ func TestUserPasswdLine(t *testing.T) {
 	if err != nil {
 		t.Fatalf("error inesperado: %v", err)
 	}
-	want := "jack:x:1000:1000:Jack Daniels:/home/jack:/bin/bash"
+	want := "demo:x:1000:1000:Demo Daniels:/home/demo:/bin/bash"
 	if line != want {
 		t.Fatalf("linea = %q, queria %q", line, want)
 	}
@@ -158,7 +158,7 @@ func TestUserShadowLine(t *testing.T) {
 	if err != nil {
 		t.Fatalf("error inesperado: %v", err)
 	}
-	want := "jack:$6$salt$hash:20000:0:99999:7:::"
+	want := "demo:$6$salt$hash:20000:0:99999:7:::"
 	if line != want {
 		t.Fatalf("linea = %q, queria %q", line, want)
 	}
@@ -167,18 +167,18 @@ func TestUserShadowLine(t *testing.T) {
 func TestValidateRejectsBrokenFields(t *testing.T) {
 	casos := map[string]func(*User){
 		"nombre vacio":                  func(u *User) { u.Name = "" },
-		"nombre con mayusculas":         func(u *User) { u.Name = "Jack" },
+		"nombre con mayusculas":         func(u *User) { u.Name = "Demo" },
 		"nombre con dos puntos":         func(u *User) { u.Name = "ja:ck" },
 		"nombre con espacio":            func(u *User) { u.Name = "ja ck" },
-		"nombre que empieza por digito": func(u *User) { u.Name = "1jack" },
+		"nombre que empieza por digito": func(u *User) { u.Name = "1demo" },
 		"uid de root":                   func(u *User) { u.UID = 0 },
 		"gid negativo":                  func(u *User) { u.GID = -1 },
-		"home relativo":                 func(u *User) { u.Home = "home/jack" },
+		"home relativo":                 func(u *User) { u.Home = "home/demo" },
 		"home con dos puntos":           func(u *User) { u.Home = "/home/ja:ck" },
 		"shell relativa":                func(u *User) { u.Shell = "bash" },
-		"gecos con dos puntos":          func(u *User) { u.Gecos = "Jack:Daniels" },
+		"gecos con dos puntos":          func(u *User) { u.Gecos = "Demo:Daniels" },
 		"grupo invalido":                func(u *User) { u.Groups = []string{"Sudo"} },
-		"grupo igual al usuario":        func(u *User) { u.Groups = []string{"jack"} },
+		"grupo igual al usuario":        func(u *User) { u.Groups = []string{"demo"} },
 	}
 
 	for nombre, romper := range casos {
@@ -202,11 +202,11 @@ func TestValidateAcceptsNormalUser(t *testing.T) {
 func TestAddMembersAppendsToExistingGroup(t *testing.T) {
 	group := "root:x:0:\nsudo:x:27:\nadm:x:4:syslog\nplugdev:x:46:\n"
 
-	got, err := AddMembers(group, "sudo", "jack")
+	got, err := AddMembers(group, "sudo", "demo")
 	if err != nil {
 		t.Fatalf("error inesperado: %v", err)
 	}
-	if !strings.Contains(got, "sudo:x:27:jack") {
+	if !strings.Contains(got, "sudo:x:27:demo") {
 		t.Fatalf("no se anadio el miembro: %q", got)
 	}
 	// El resto del fichero no se toca.
@@ -218,38 +218,38 @@ func TestAddMembersAppendsToExistingGroup(t *testing.T) {
 }
 
 func TestAddMembersKeepsExistingMembers(t *testing.T) {
-	group := "adm:x:4:syslog,jack\n"
+	group := "adm:x:4:syslog,demo\n"
 
-	got, err := AddMembers(group, "adm", "jack", "ana")
+	got, err := AddMembers(group, "adm", "demo", "ana")
 	if err != nil {
 		t.Fatalf("error inesperado: %v", err)
 	}
-	if got != "adm:x:4:syslog,jack,ana\n" {
-		t.Fatalf("contenido = %q, queria %q", got, "adm:x:4:syslog,jack,ana\n")
+	if got != "adm:x:4:syslog,demo,ana\n" {
+		t.Fatalf("contenido = %q, queria %q", got, "adm:x:4:syslog,demo,ana\n")
 	}
 }
 
 func TestAddMembersIsIdempotent(t *testing.T) {
 	group := "sudo:x:27:\n"
 
-	una, err := AddMembers(group, "sudo", "jack")
+	una, err := AddMembers(group, "sudo", "demo")
 	if err != nil {
 		t.Fatalf("error inesperado: %v", err)
 	}
-	dos, err := AddMembers(una, "sudo", "jack")
+	dos, err := AddMembers(una, "sudo", "demo")
 	if err != nil {
 		t.Fatalf("error inesperado: %v", err)
 	}
 	if una != dos {
 		t.Fatalf("llamar dos veces cambio el fichero: %q y %q", una, dos)
 	}
-	if strings.Count(dos, "jack") != 1 {
+	if strings.Count(dos, "demo") != 1 {
 		t.Fatalf("el miembro esta duplicado: %q", dos)
 	}
 }
 
 func TestAddMembersRejectsUnknownGroup(t *testing.T) {
-	if _, err := AddMembers("sudo:x:27:\n", "wheel", "jack"); err == nil {
+	if _, err := AddMembers("sudo:x:27:\n", "wheel", "demo"); err == nil {
 		t.Fatal("un grupo que no existe no puede aceptar miembros")
 	}
 }
@@ -257,14 +257,14 @@ func TestAddMembersRejectsUnknownGroup(t *testing.T) {
 func TestAddMembersIgnoresCommentsAndBlankLines(t *testing.T) {
 	group := "# sudo:x:27:\n\nsudo:x:27:\n"
 
-	got, err := AddMembers(group, "sudo", "jack")
+	got, err := AddMembers(group, "sudo", "demo")
 	if err != nil {
 		t.Fatalf("error inesperado: %v", err)
 	}
 	if !strings.HasPrefix(got, "# sudo:x:27:\n") {
 		t.Fatalf("se toco el comentario: %q", got)
 	}
-	if !strings.Contains(got, "sudo:x:27:jack") {
+	if !strings.Contains(got, "sudo:x:27:demo") {
 		t.Fatalf("no se anadio el miembro: %q", got)
 	}
 }
@@ -399,28 +399,28 @@ func TestUserGroupLine(t *testing.T) {
 	if err != nil {
 		t.Fatalf("error inesperado: %v", err)
 	}
-	if line != "jack:x:1000:" {
-		t.Fatalf("linea = %q, queria jack:x:1000:", line)
+	if line != "demo:x:1000:" {
+		t.Fatalf("linea = %q, queria demo:x:1000:", line)
 	}
 }
 
 func TestGroupByGIDAndName(t *testing.T) {
-	group := "root:x:0:\nsudo:x:27:\njack:x:1000:\n"
+	group := "root:x:0:\nsudo:x:27:\ndemo:x:1000:\n"
 
-	if nombre, ok := GroupByGID(group, 1000); !ok || nombre != "jack" {
+	if nombre, ok := GroupByGID(group, 1000); !ok || nombre != "demo" {
 		t.Fatalf("GroupByGID(1000) = %q %v", nombre, ok)
 	}
 	if _, ok := GroupByGID(group, 4242); ok {
 		t.Fatal("un GID que no esta no puede devolver grupo")
 	}
-	if !GroupByName(group, "jack") {
-		t.Fatal("GroupByName(jack) deberia encontrarlo")
+	if !GroupByName(group, "demo") {
+		t.Fatal("GroupByName(demo) deberia encontrarlo")
 	}
 	if GroupByName(group, "ana") {
 		t.Fatal("GroupByName(ana) no deberia encontrarlo")
 	}
 	// Los comentarios no son grupos.
-	if GroupByName("# jack:x:1000:\n", "jack") {
+	if GroupByName("# demo:x:1000:\n", "demo") {
 		t.Fatal("una linea comentada no es un grupo")
 	}
 }

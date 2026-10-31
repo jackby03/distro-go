@@ -25,7 +25,7 @@ func TestParseDeviceDescriptor(t *testing.T) {
 	var vendorOff, productOff, serialOff uint32
 	buf, vendorOff = appendASCII(buf, "SanDisk")
 	buf, productOff = appendASCII(buf, "Extreme SSD")
-	buf, serialOff = appendASCII(buf, "201703310007F")
+	buf, serialOff = appendASCII(buf, "SN-PRUEBAS-0001")
 
 	binary.LittleEndian.PutUint32(buf[0:4], 1) // Version
 	binary.LittleEndian.PutUint32(buf[4:8], uint32(len(buf)))
@@ -41,7 +41,7 @@ func TestParseDeviceDescriptor(t *testing.T) {
 	if desc.model != "SanDisk Extreme SSD" {
 		t.Errorf("model = %q", desc.model)
 	}
-	if desc.serial != "201703310007F" {
+	if desc.serial != "SN-PRUEBAS-0001" {
 		t.Errorf("serial = %q", desc.serial)
 	}
 	if !desc.removable {

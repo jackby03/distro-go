@@ -23,14 +23,14 @@ func volume(mount, label, fs string) *blockdev.Volume {
 func fakeInventory() windisk.Inventory {
 	return windisk.Inventory{Disks: []blockdev.Disk{
 		{
-			Number: 0, Model: "KINGSTON SA400S37480G", Serial: "50026B77837DB62E",
+			Number: 0, Model: "SSD SATA 480GB", Serial: "SN-SATA-0001",
 			Bus: blockdev.BusSATA, SizeBytes: 480103981056, LogicalSector: 512, PhysicalSector: 512,
 			Partitions: []blockdev.Partition{
 				{Number: 1, SizeBytes: 480101003264, Volume: volume(`D:\`, "", "NTFS")},
 			},
 		},
 		{
-			Number: 1, Model: "Patriot M.2 P300 1024GB", Serial: "P300DBBA23072702055 _00000001.",
+			Number: 1, Model: "NVMe 1TB", Serial: "SN-NVME-0001",
 			Bus: blockdev.BusNVMe, SizeBytes: 1024209543168, LogicalSector: 512, PhysicalSector: 4096,
 			IsBoot: true, IsSystem: true,
 			Partitions: []blockdev.Partition{
@@ -40,14 +40,14 @@ func fakeInventory() windisk.Inventory {
 			},
 		},
 		{
-			Number: 2, Model: "TOSHIBA External USB 3.0", Serial: "20171202002528F",
+			Number: 2, Model: "USB externo 1TB", Serial: "SN-DATOS-0001",
 			Bus: blockdev.BusUSB, SizeBytes: 1000204883968, LogicalSector: 512, PhysicalSector: 4096,
 			Partitions: []blockdev.Partition{
-				{Number: 1, SizeBytes: 1000202043392, Volume: volume(`F:\`, "DD  JACK", "NTFS")},
+				{Number: 1, SizeBytes: 1000202043392, Volume: volume(`F:\`, "DATOS", "NTFS")},
 			},
 		},
 		{
-			Number: 3, Model: "External USB3.0", Serial: "201703310007F",
+			Number: 3, Model: "USB3.0 externo", Serial: "SN-PRUEBAS-0001",
 			Bus: blockdev.BusUSB, SizeBytes: 500107862016, LogicalSector: 512, PhysicalSector: 4096,
 			Partitions: []blockdev.Partition{
 				{Number: 1, SizeBytes: 500105216000, TypeGUID: "ebd0a0a2-b9e5-4433-87c0-68b6b72699c7", Volume: volume(`E:\`, "New Volume", "exFAT")},
@@ -143,7 +143,7 @@ func TestListJSON(t *testing.T) {
 	if !target.Eligible || !target.Destructive {
 		t.Errorf("el disco 3 deberia ser elegible y destructivo: %+v", target)
 	}
-	if target.Serial != "201703310007F" {
+	if target.Serial != "SN-PRUEBAS-0001" {
 		t.Errorf("serial = %q", target.Serial)
 	}
 	if len(target.Partitions) != 1 || target.Partitions[0].FileSystem != "exFAT" {
