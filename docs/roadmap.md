@@ -28,8 +28,11 @@ No se re-discuten sin abrir un DG-xx que lo justifique.
 - Arnes de pruebas: QEMU mas Alpine para e2fsck y fsck.fat. Sin WSL y sin Docker.
 - Fixtures: Mint 22.3 (casper) primario, Debian live secundario, Alpine solo como caso
   de "layout raro" (su rootfs va en el initramfs, no en squashfs).
-- Hardware: Disk 3 (USB, 466 GiB) y solo en M7. Disk 2 tambien es USB y contiene datos,
-  asi que el guard trabaja con allowlist por serial, no solo por tipo de bus.
+- Hardware: Disk 3 (USB, 466 GiB) y solo en M7. Disk 2 tambien es USB y contiene datos.
+- Politica de disco: solo bloquea el disco del sistema (IsSystem/IsBoot o que aloje
+  C:), el dispositivo de solo lectura y el disco sin serial o sin tamano. Tener
+  volumenes montados o particiones no bloquea: se avisa de lo que se pierde. La
+  confirmacion son las flags, al estilo diskpart: --target-disk y --expect-serial.
 
 ## Milestones
 
@@ -48,8 +51,9 @@ No se re-discuten sin abrir un DG-xx que lo justifique.
     proteccion por disco.
   - Ficheros: pkg/blockdev, pkg/windisk, pkg/safety, internal/cli, cmd/distrogo.
   - Respuestas: ~5.
-  - Criterio de salida: lista los cuatro discos, marca Disk 0 y Disk 1 como protegidos
-    y Disk 2 y Disk 3 como seleccionables, no escribe nada y funciona sin admin.
+  - Criterio de salida: lista los cuatro discos; solo Disk 1 aparece bloqueado
+    (aloja Windows); Disk 2 y Disk 3 aparecen elegibles con el aviso de lo que se
+    destruiria; no escribe nada y funciona sin admin.
 
 - [ ] M2 — GPT sobre imagen
   - Entrega: particionado de un .img con ESP de 512 MiB y root con el resto, con la

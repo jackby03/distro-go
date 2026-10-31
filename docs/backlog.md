@@ -38,11 +38,11 @@ Los milestones estan en roadmap.md.
     como IsSystem o IsBoot, ni discos con volumenes montados.
   - Cierre: test que pasa el flag y aun asi recibe rechazo para Disk 1.
 
-- [ ] DG-06 — Allowlist por serial en la maquina de desarrollo (M1).
-  - Hay dos discos USB. Disk 2 tiene datos del usuario. Filtrar solo por BusType es
+- [ ] DG-06 — La identidad del disco va por serial (M1).
+  - Hay dos discos USB y Disk 2 tiene datos del usuario. Filtrar solo por BusType es
     insuficiente.
-  - Cierre: el guard exige numero, serial y tamano coincidentes, y rechaza Disk 2 con
-    un mensaje explicito.
+  - Cierre: sin --expect-serial coincidente no se escribe en ningun disco, incluido
+    Disk 2, y al confirmarlo se muestran los volumenes que se destruyen.
 
 - [ ] DG-07 — Coste del walk de metadatos (M4).
   - 103 s para 507.623 entradas, unos 200 microsegundos por entrada.
@@ -74,7 +74,61 @@ Los milestones estan en roadmap.md.
   - pkg/blockdev, pkg/gpt y pkg/safety no dependen de Win32 y pueden correr en Linux.
   - Cierre: workflow que ejecuta `go test ./pkg/...` con CGO deshabilitado.
 
+- [ ] DG-14 — Documentar el ABI medido de windisk (M1).
+  - La cabecera de DRIVE_LAYOUT_INFORMATION_EX son 48 bytes, no 24, y
+    PARTITION_INFORMATION_EX tiene el offset en +8 y la union en +32. Los tamaños
+    coinciden con la documentacion pero el orden de campos no.
+  - Cierre: `docs/windisk-abi.md` con la tabla de offsets, la evidencia (disco vacio
+    devuelve 48 bytes) y referencia al test dorado que lo fija.
+
+- [ ] DG-15 — Partir `inventory_windows.go` (M2).
+  - 473 lineas y creciendo: apertura y consultas de disco, mas enumeracion de
+    unidades y mapeo de volumenes, en el mismo fichero.
+  - Cierre: `disks_windows.go` y `volumes_windows.go`, sin cambio de comportamiento.
+
+- [ ] DG-17 — IsSystem e IsBoot reales (M7).
+  - Hoy ambos se marcan en el disco de %SystemRoot%: es una aproximacion
+    conservadora. La distincion real entre disco de sistema y de arranque esta en
+    la BCD.
+  - Cierre: leer la BCD o documentar que la aproximacion es definitiva.
+
+- [ ] DG-18 — Imagenes .img dispersas en NTFS (M2).
+  - Truncar en NTFS reserva el espacio real: una imagen de 466 GiB ocupa 466 GiB.
+    Para el banco de pruebas con imagenes de 8-12 GiB no molesta; para replicar el
+    disco objetivo, si.
+  - Cierre: FSCTL_SET_SPARSE en el backend de fichero, con medicion de espacio real.
+
+- [ ] DG-19 — Camino elevado de windisk sin ejercitar (M1).
+  - Con la consola sin privilegios se usa el fallback de acceso 0; la rama
+    GENERIC_READ no se ejecuta en esta maquina. La cobertura del 80,7 por ciento
+    esconde ese hueco.
+  - Cierre: una ejecucion como administrador que liste los discos y sin avisos.
+
+## Abiertos (continuacion)
+
+- [ ] DG-20 — Bloquear y desmontar los volumenes del disco objetivo (M7).
+  - Con la politica corregida un disco montado es elegible. Para escribir la tabla
+    hace falta FSCTL_LOCK_VOLUME y FSCTL_DISMOUNT_VOLUME en cada volumen del disco,
+    y despues IOCTL_DISK_UPDATE_PROPERTIES.
+  - Puede fallar si Explorer o un antivirus tienen ficheros abiertos: el mensaje
+    debe decir que cerrar, no pedir mountvol.
+  - Cierre: instalacion completa en un disco con volumenes montados sin pasos manuales.
+
+- [ ] DG-21 — README y AGENTS.md coherentes con la politica nueva (M1).
+  - El README afirma que la operacion falla cerrada salvo bus USB o --allow-non-usb.
+    Ya no es cierto: solo bloquea el disco del sistema y --allow-non-usb silencia
+    un aviso.
+  - Cierre: lineas actualizadas en README y en la seccion de seguridad.
+
 ## Cerrados
+
+- [X] DG-16 — Un volumen montado ya no bloquea la instalacion.
+  - Decision: solo bloquea el disco del sistema. Tener volumenes montados o
+    particiones es un aviso con el detalle de lo que se destruye, no un rechazo.
+    La confirmacion son las flags, al estilo diskpart. El bloqueo y desmontaje de
+    volumenes pasa a ser un paso interno del instalador (DG-20).
+  - Evidencia: TestAssessWarnsButAllowsMountedVolume y
+    TestDevelopmentMachineOnlySystemDiskIsBlocked.
 
 - [X] Viabilidad de escribir ext4 desde Windows.
   - Evidencia: e2fsck 1.47.4 con cinco pasadas sin errores, 12 binarios setuid, 1,6 GiB

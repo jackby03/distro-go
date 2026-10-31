@@ -14,6 +14,8 @@ import (
 	"distrogo/pkg/blockdev"
 )
 
+// TODO(DG-15): este fichero pasa de 470 lineas y mezcla apertura y consultas de
+// disco con enumeracion de unidades y mapeo de volumenes. Partirlo.
 const (
 	// maxDisks es hasta donde se sondea la numeracion de discos. Windows no
 	// ofrece una lista de discos fisicos: hay que abrir \\.\PhysicalDriveN y
@@ -414,6 +416,10 @@ func attachVolumes(d *blockdev.Disk, volumes []blockdev.Volume, inv *Inventory) 
 	}
 }
 
+// TODO(DG-17): IsSystem e IsBoot son aproximados: ambos se marcan en el disco
+// de %SystemRoot%. La distincion real entre disco de sistema y de arranque sale
+// de la BCD.
+//
 // markSystemDisk marca el disco que aloja %SystemRoot%.
 func markSystemDisk(inv *Inventory) {
 	number, ok := systemRootDisk(inv)
@@ -456,6 +462,9 @@ func isMissingDevice(err error) bool {
 		errors.Is(err, windows.ERROR_INVALID_NAME)
 }
 
+// TODO(DG-19): la rama GENERIC_READ de openWithFallback no se ejercita en una
+// consola sin privilegios. Verificarla una vez como administrador.
+//
 // openWithFallback intenta abrir con GENERIC_READ, que da acceso a todos los
 // IOCTL de consulta. Si Windows lo niega por falta de privilegios, reintenta con
 // acceso 0: se pierden algunos datos, pero se puede enumerar sin ser admin.

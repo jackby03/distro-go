@@ -180,6 +180,9 @@ type partitionInformationEx struct {
 	Union              [partitionUnionSize]byte
 }
 
+// TODO(DG-14): volcar este ABI medido a docs/windisk-abi.md, con la evidencia
+// (un disco vacio devuelve 48 bytes) para que nadie lo cambie sin test.
+//
 // Cabecera de DRIVE_LAYOUT_INFORMATION_EX.
 //
 // Windows devuelve 48 bytes de cabecera, no los 24 que salen de la

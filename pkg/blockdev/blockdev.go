@@ -124,10 +124,9 @@ func (v Volume) Mounted() bool { return v.MountPoint != "" }
 
 // Image es un Device respaldado por un fichero, para desarrollo y tests.
 //
-// Aviso para imagenes grandes: en NTFS, truncar un fichero reserva el espacio
-// completo, no es disperso. Una imagen de 8 GiB ocupa 8 GiB reales. Para el
-// banco de pruebas basta; para replicar un disco de 466 GiB habra que activar
-// FSCTL_SET_SPARSE o mantener las imagenes pequenas.
+// TODO(DG-18): en NTFS, truncar reserva el espacio real (una imagen de 466 GiB
+// ocupa 466 GiB). Activar FSCTL_SET_SPARSE antes de intentar replicar el disco
+// objetivo a escala 1:1.
 type Image struct {
 	f        *os.File
 	path     string
