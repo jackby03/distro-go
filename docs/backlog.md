@@ -118,6 +118,14 @@ Los milestones estan en roadmap.md.
 
 ## Cerrados
 
+- [X] M5 — Rootfs de Mint completo volcado en ext4.
+  - Evidencia: partition --populate sobre out/test.img de 12 GiB; 22899 dirs,
+    322477 ficheros, 162239 symlinks, 7.070.158.975 bytes en 47 minutos;
+    e2fsck 1.47.4 sin errores: 507625/560096 ficheros, 0,1 por ciento no
+    contiguos, 1985493/3014395 bloques.
+  - Huecos conocidos y aceptados (DG-04): 8 device nodes no creados y 21
+    hardlinks convertidos en copias.
+
 - [X] M3 — Arranque UEFI completo del live desde el ESP generado.
   - Evidencia: out/live.img de 6 GiB con ESP de 4 GiB FAT32 (268 ficheros,
     2,5 GiB), verificado con 7-Zip contra el ISO; arrancado en QEMU con OVMF
@@ -200,3 +208,35 @@ Los milestones estan en roadmap.md.
   - Sin persistencia el live arranca perfectamente: es M3 cumplido.
   - Cierre: crear un `casper-rw` de tamano fijo con ext4 dentro y arrancar con
     `persistent`; los cambios en /home sobreviven al reinicio.
+
+- [ ] DG-28 — El volcado completo tarda 47 minutos (M5).
+  - 507.623 entradas y 6,6 GiB. El cuello no son los bytes: son los 162.239
+    symlinks y los 22.899 directorios, cada uno con su asignacion de inodo.
+  - No impide nada: es una instalacion de una sola vez.
+  - Medido en M6: 507.615 entradas en 2.707 s, 187 entradas/s. Por entrada se
+    resuelven tres veces la ruta completa (Create, Chmod y Chown), lo que suma del
+    orden de diez millones de lecturas de bloques de directorio.
+  - Cierre: medir donde se va el tiempo por operacion y bajarlo de 20 minutos.
+
+- [ ] DG-29 — go-diskfs valida checksums de inodo sin la feature que los define (M6).
+  - Con `metadata_csum` desactivada, go-diskfs sigue escribiendo y **validando**
+    el checksum de cada inodo. `e2fsck` o el kernel, que no mantienen ese campo
+    cuando la feature no esta, lo invalidan sin saberlo.
+  - Consecuencia: un ext4 escrito por DistroGo deja de ser legible por nosotros
+    despues de cualquier `e2fsck` que toque inodos, aunque para Linux este
+    perfectamente sano.
+  - Palancas: activar `metadata_csum` de verdad al formatear (y validarlo con
+    e2fsck completo), o vendorizar go-diskfs para que no valide lo que no se
+    anuncia.
+  - Confirmado en M6 sobre la imagen real: al arrancar el invitado, `etc/passwd`
+    deja de ser legible ("could not read directory entries for etc").
+  - Cierre: `boot` funciona sobre una imagen que ya paso por e2fsck.
+
+- [ ] DG-30 — El ISO no trae cuenta de usuario (M6).
+  - El squashfs de Mint incluye solo `root`, bloqueado (`*` en `/etc/shadow`); el
+    usuario live lo crea casper en el arranque. Al copiar el arbol tal cual, el
+    sistema instalado se queda sin ninguna cuenta con la que iniciar sesion.
+  - En M6 se creo a mano arrancando con `init=/bin/bash` y `useradd`. No es un
+    fallo del volcado: es una capacidad que le falta al producto. Va a M6.5.
+  - Decision pendiente: cuenta por parametros o creacion en el primer arranque.
+  - Cierre: `partition --install` deja una cuenta usable, con home y sudo.

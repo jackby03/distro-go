@@ -8,6 +8,39 @@ It requires no Windows Subsystem for Linux (WSL), no Hyper-V/VirtualBox installa
 
 ---
 
+## Project Status
+
+Proof of concept with a complete pipeline. Everything is validated against flat disk
+images (`.img`) booted in QEMU with OVMF; nothing is written to physical hardware yet.
+
+- [X] M0 — repository skeleton and `pkg/rootfs` contract
+- [X] M1 — `distrogo list`, read-only disk inventory with protection verdicts
+- [X] M2 — GPT partitioning of an image (verified with `sfdisk --verify`)
+- [X] M3 — FAT32 ESP, shim + GRUB and a booting live session from the image
+- [X] M4 — SquashFS reader, 507,623 entries streamed without full extraction
+- [X] M5 — ext4 writer, `e2fsck` clean on a full 7 GB rootfs
+- [X] M6 — installed system boots: GRUB, kernel, initramfs, ext4 root, desktop
+- [ ] M6.5 — user account creation during install
+- [ ] M7 — first writes to `\\.\PhysicalDrive`
+- [ ] M8 — dump performance
+
+Measured end to end on Linux Mint 22.3 Xfce: 507,615 entries and 7,070,158,975 bytes
+written in 45 minutes, and the resulting image boots to the greeter with no live
+session and no installer icon.
+
+Known limitations at this stage:
+
+- No user account is created yet. The ISO ships only `root`, locked; `casper`
+  creates the live user at boot time, so an installed tree has no account to log in
+  with.
+- The image can only be re-read by DistroGo while no other tool has written to it.
+  The ext4 reader validates inode checksums that the filesystem does not advertise,
+  so `e2fsck` or a writable mount invalidates them for us (not for Linux).
+- The dump runs at about 187 entries per second, dominated by per-entry overhead
+  rather than bandwidth.
+
+---
+
 ## Key Features
 
 * **True Bare-Metal Deployment:** Installs full, persistent Linux root filesystems (`ext4`) with native UEFI bootloaders, ready to boot directly on any physical x86_64 hardware.
@@ -50,7 +83,8 @@ DistroGo operates through a modular pipeline designed to minimize dependencies a
 | **Partition Scheme** | GPT (GUID Partition Table) |
 | **Partition 1 (ESP)** | 512 MiB, FAT32 (`c12a7328-f81f-11d2-ba4b-00a0c93ec93b`) |
 | **Partition 2 (Root)** | Remaining Capacity, ext4 (`0fc63daf-8483-4772-8e79-3d69d8477de4`) |
-| **Supported Distributions** | Debian, Linux Mint, Ubuntu, and standard live-boot compatible derivatives |
+| **Supported Distributions** | Debian (`live/`), Linux Mint and Ubuntu (`casper/`), and live-boot compatible derivatives |
+| **Measured Throughput** | 507,615 entries and 7.07 GB in 45 minutes on Linux Mint 22.3 Xfce |
 | **Build Flags** | Pure static Go compilation (`CGO_ENABLED=0`, `GOOS=windows`, `GOARCH=amd64`) |
 
 ---
@@ -105,15 +139,33 @@ distrogo.exe list
 
 ```
 
-### Install Linux Directly to Target Disk
+### Install a Distribution into an Image (end to end)
+
+One command formats the disk, streams the rootfs and seeds the boot configuration:
 
 ```powershell
-distrogo.exe install `
-  --iso "C:\Path\To\linuxmint-22.3-xfce-64bit.iso" `
-  --target-disk 3 `
-  --hostname "portable-mint"
+distrogo.exe partition --image out\test.img --size 12GiB --boot-from testdata\isos\linuxmint-22.3-xfce-64bit.iso --install --title "Mint 22.3 instalado"
 
 ```
+
+### Re-seed the Boot Configuration
+
+Iterating on the bootloader takes about a second, because the rootfs is left alone:
+
+```powershell
+distrogo.exe boot --image out\test.img --title "Mint 22.3 instalado"
+
+```
+
+### Boot the Result
+
+```powershell
+.\tools\lab-qemu.ps1 -Uefi -NoGuestIso -Image out\test.img
+
+```
+
+`distrogo.exe install --target-disk`, which writes to a physical disk, does not exist
+yet. It is M7.
 
 ---
 
