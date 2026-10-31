@@ -26,6 +26,8 @@ El agente de IA actúa como copiloto técnico e implementador; el desarrollador 
 
 3. **Punto de parada obligatorio:** Toda respuesta con código debe terminar solicitando explícitamente al humano la validación de las pruebas antes de continuar.
 4. **Prohibición de autonomía:** Queda estrictamente prohibido avanzar a un siguiente submódulo o hito sin la confirmación explícita del humano ("aprobado", "listo", "adelante").
+5. **Commits:** el agente **nunca** ejecuta `git add` ni `git commit` sin autorización explícita del humano. Puede proponer el mensaje y agrupar los cambios, pero el humano decide cuándo se sella y con qué texto. Esto incluye los cambios pequeños y los que "solo arreglan una errata".
+6. **Verificar, no suponer:** antes de afirmar que algo funciona, comprobarlo con el instrumento adecuado (el test, `Get-Command -Parameters`, `e2fsck`, un arranque real). Que compile o que parsee no es prueba de nada.
 
 ---
 
