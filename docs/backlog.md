@@ -122,6 +122,11 @@ Los milestones estan en roadmap.md.
 
 ## Cerrados
 
+- [X] M1 — distrogo list sobre hardware real.
+  - Evidencia: 49 pruebas en verde; salida real con cuatro discos, Disk 1 bloqueado
+    por alojar Windows, Disk 2 y Disk 3 elegibles y destructivos, ejecutado sin
+    elevacion; `list --json` con codigos de motivo.
+
 - [X] DG-16 — Un volumen montado ya no bloquea la instalacion.
   - Decision: solo bloquea el disco del sistema. Tener volumenes montados o
     particiones es un aviso con el detalle de lo que se destruye, no un rechazo.

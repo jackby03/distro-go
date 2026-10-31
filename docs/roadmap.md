@@ -46,14 +46,14 @@ No se re-discuten sin abrir un DG-xx que lo justifique.
   - Respuestas: n/a.
   - Criterio de salida: commit inicial. Cumplido.
 
-- [ ] M1 — `distrogo list`
+- [X] M1 — `distrogo list`
   - Entrega: inventario de solo lectura con bus, serial, sectores y veredicto de
     proteccion por disco.
   - Ficheros: pkg/blockdev, pkg/windisk, pkg/safety, internal/cli, cmd/distrogo.
   - Respuestas: ~5.
   - Criterio de salida: lista los cuatro discos; solo Disk 1 aparece bloqueado
     (aloja Windows); Disk 2 y Disk 3 aparecen elegibles con el aviso de lo que se
-    destruiria; no escribe nada y funciona sin admin.
+    destruiria; no escribe nada y funciona sin admin. Cumplido y aprobado.
 
 - [ ] M2 — GPT sobre imagen
   - Entrega: particionado de un .img con ESP de 512 MiB y root con el resto, con la
