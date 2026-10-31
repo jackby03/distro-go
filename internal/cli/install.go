@@ -66,6 +66,13 @@ func (a *App) installTarget(esp *fat32.FileSystem, root *ext4fs.FS, espInfo fat3
 		return res, fmt.Errorf("escribir el fstab: %w", err)
 	}
 
+	// Las unidades del live no tienen nada que hacer en un sistema instalado.
+	masked, err := maskLiveOnlyUnits(root)
+	if err != nil {
+		return res, err
+	}
+	res.Files += masked
+
 	return res, nil
 }
 
@@ -429,4 +436,48 @@ func chownHome(root *ext4fs.FS, dir string, uid, gid uint32) (int, error) {
 		return cambiados, fmt.Errorf("dejar el home a nombre del usuario: %w", err)
 	}
 	return cambiados, nil
+}
+
+// liveOnlyUnits son unidades que solo tienen sentido arrancando el ISO live.
+//
+// casper-md5check verifica las sumas de comprobacion del ISO en cada arranque, y
+// en un sistema instalado no hay ISO: falla siempre y deja una linea roja en el
+// arranque y en el apagado. casper.service es el trabajo de arranque del live. En
+// un Mint instalado de verdad el paquete casper ya no esta; aqui se queda porque
+// se copia el arbol entero, asi que hay que enmascararlas.
+var liveOnlyUnits = []string{"casper-md5check.service", "casper.service"}
+
+// maskLiveOnlyUnits enmascara las unidades del live en el sistema instalado.
+//
+// Devuelve cuantas enmascaro. Se usa el mecanismo de systemctl mask: un enlace a
+// /dev/null en /etc/systemd/system, que tiene prioridad sobre la unidad real y
+// sobre los enlaces de las unidades que la piden. No se borra nada porque borrar
+// en ext4 con go-diskfs corrompe el directorio (DG-31).
+func maskLiveOnlyUnits(root *ext4fs.FS) (int, error) {
+	// La carpeta puede no existir en arboles minimos: go-diskfs no crea padres.
+	for _, dir := range []string{"etc/systemd", "etc/systemd/system"} {
+		if err := ensureDir(root, dir); err != nil {
+			return 0, err
+		}
+	}
+
+	tgt := root.Target()
+	masked := 0
+
+	for _, unit := range liveOnlyUnits {
+		path := "etc/systemd/system/" + unit
+
+		// Si ya hay algo ahi (una mascara de una instalacion anterior), se deja.
+		if _, err := root.Stat(path); err == nil {
+			continue
+		}
+
+		e := rootfs.Entry{Path: path, Type: rootfs.TypeSymlink, Link: "/dev/null"}
+		if err := tgt.Symlink(e); err != nil {
+			return masked, fmt.Errorf("enmascarar %q: %w", unit, err)
+		}
+		masked++
+	}
+
+	return masked, nil
 }

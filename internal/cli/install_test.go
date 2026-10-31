@@ -521,3 +521,52 @@ func TestCreateUserRefusesTakenGID(t *testing.T) {
 		t.Fatalf("el error deberia decir que GID esta ocupado: %v", err)
 	}
 }
+
+func TestInstallTargetMasksLiveOnlyUnits(t *testing.T) {
+	root := newUserFS(t)
+	for _, path := range []string{"boot/vmlinuz-9.9.9-test", "boot/initrd.img-9.9.9-test"} {
+		if err := root.WriteFile(path, strings.NewReader("x")); err != nil {
+			t.Fatalf("WriteFile %q: %v", path, err)
+		}
+	}
+
+	img, err := blockdev.CreateImage(filepath.Join(t.TempDir(), "esp.img"), 48<<20)
+	if err != nil {
+		t.Fatalf("CreateImage: %v", err)
+	}
+	defer img.Close()
+	esp, err := fat32.Format(img, fat32.Options{Label: "SYSTEM"})
+	if err != nil {
+		t.Fatalf("fat32.Format: %v", err)
+	}
+	rootInfo, err := root.Info()
+	if err != nil {
+		t.Fatalf("Info: %v", err)
+	}
+
+	app := &App{Out: &bytes.Buffer{}, Err: &bytes.Buffer{}}
+	if _, err := app.installTarget(esp, root, esp.Info(), rootInfo, "Prueba"); err != nil {
+		t.Fatalf("installTarget: %v", err)
+	}
+
+	// casper-md5check falla en cada arranque de un sistema instalado (no hay ISO
+	// que verificar), asi que tiene que quedar enmascarado igual que haria
+	// systemctl mask: un enlace a /dev/null.
+	var enlaces []string
+	err = ext4fs.Source(root, "etc/systemd/system").Walk(func(e rootfs.Entry) error {
+		if e.Type == rootfs.TypeSymlink {
+			enlaces = append(enlaces, e.Path+" -> "+e.Link)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk: %v", err)
+	}
+
+	for _, unit := range []string{"casper-md5check.service", "casper.service"} {
+		quiere := unit + " -> /dev/null"
+		if !strings.Contains(strings.Join(enlaces, ","), quiere) {
+			t.Errorf("falta la mascara %q; hay %v", quiere, enlaces)
+		}
+	}
+}
