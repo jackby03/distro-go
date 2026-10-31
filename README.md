@@ -226,4 +226,4 @@ To avoid data loss on production machines:
 
 ## License
 
-This project is licensed under the MIT License. See the [LICENSE](https://www.google.com/search?q=LICENSE) file for complete details.
+This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for complete details.
