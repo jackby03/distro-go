@@ -43,6 +43,17 @@
     Borra out/OVMF_VARS.fd antes de arrancar, para que OVMF vuelva a su orden de
     arranque de fabrica. Util cuando la NVRAM conserva una entrada vieja al CD.
 
+.PARAMETER Gl
+    Aceleracion 3D: virtio-vga-gl con el backend gtk en modo OpenGL. Da un
+    escritorio fluido, pero el firmware puede quedarse sin video antes de que el
+    kernel cargue el driver de virtio-gpu. Si la pantalla se queda negra, este no
+    es el camino.
+
+.PARAMETER NoGrab
+    Displays gtk sin capturar el raton al pasar por encima. Quita el aviso
+    "Press Ctrl+Alt+G to release grab" al mover el raton dentro de la ventana.
+
+
 .EXAMPLE
     .\tools\lab-qemu.ps1
 
@@ -130,6 +141,12 @@ if ($Uefi) {
     $qemuArgs += @("-boot", "order=d")
 }
 
+if ($Gl -and -not $Headless) {
+    $qemuArgs += @("-device", "virtio-vga-gl", "-display", "gtk,gl=on,grab-on-hover=off")
+} elseif ($NoGrab -and -not $Headless) {
+    $qemuArgs += @("-display", "gtk,grab-on-hover=off")
+}
+
 if ($SerialLog) {
     $SerialLog = Join-Path (Get-Location) $SerialLog
     $serialDir = Split-Path -Parent $SerialLog
@@ -153,7 +170,7 @@ if ($NoGuestIso) {
 }
 Write-Host "disco: $Image"
 if ($SerialLog) { Write-Host "consola: $SerialLog" }
-Write-Host "modo : $(if ($Uefi) { 'UEFI (OVMF)' } else { 'BIOS (SeaBIOS)' })$(if ($Network) { ' + red NAT' })"
+Write-Host "modo : $(if ($Uefi) { 'UEFI (OVMF)' } else { 'BIOS (SeaBIOS)' })$(if ($Network) { ' + red NAT' })$(if ($Gl) { ' + 3D' })$(if ($NoGrab) { ' + sin captura de raton' })"
 Write-Host ""
 
 Write-Host @'
