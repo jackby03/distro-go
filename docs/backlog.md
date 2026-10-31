@@ -161,3 +161,10 @@ Los milestones estan en roadmap.md.
     aunque es NTFS. Las demas unidades si responden.
   - Cierre: reintento con GENERIC_READ o motivo documentado de por que no se puede.
 
+
+- [ ] DG-24 — Escritura de ficheros y nombres largos en FAT32 (M3).
+  - El formateo esta hecho. Falta crear directorios y ficheros, con entradas
+    8.3 generadas y entradas LFN (secuencia de 13 caracteres, checksum del nombre
+    corto y byte de secuencia), y crecimiento de directorios.
+  - Cierre: copiar EFI/boot y boot/grub del ISO al ESP, y `fsck.fat -n` limpio con
+    `mdir`/`mtype` de mtools leyendo los ficheros.
