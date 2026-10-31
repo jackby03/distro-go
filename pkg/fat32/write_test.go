@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -546,4 +547,155 @@ func TestRunOutOfSpace(t *testing.T) {
 func dotCluster(t *testing.T, entry []byte) uint32 {
 	t.Helper()
 	return uint32(binary.LittleEndian.Uint16(entry[26:])) | uint32(binary.LittleEndian.Uint16(entry[20:]))<<16
+}
+
+// Diagnostico: nombres largos en un directorio que crece.
+func TestManyLongNamesKeepCase(t *testing.T) {
+	img := newImage(t, smallVolume)
+	fs, err := Format(img, Options{})
+	if err != nil {
+		t.Fatalf("Format: %v", err)
+	}
+
+	const n = 100
+	for i := 0; i < n; i++ {
+		name := fmt.Sprintf("captura-%03d-larga.txt", i)
+		if err := fs.WriteFile("dir/"+name, strings.NewReader("x")); err != nil {
+			t.Fatalf("WriteFile %d: %v", i, err)
+		}
+	}
+	if err := fs.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	disk := reload(t, img)
+	entries, err := disk.List("dir")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(entries) != n {
+		t.Fatalf("%d entradas, se esperaban %d", len(entries), n)
+	}
+
+	bad := 0
+	for i := 0; i < n; i++ {
+		want := fmt.Sprintf("captura-%03d-larga.txt", i)
+		found := false
+		for _, e := range entries {
+			if e.Name == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			bad++
+			if bad <= 3 {
+				t.Errorf("no aparece %q", want)
+			}
+		}
+	}
+	if bad > 0 {
+		t.Fatalf("%d de %d nombres no se leen igual", bad, n)
+	}
+}
+
+// El mismo caso con un directorio que NO crece.
+func TestFewLongNamesKeepCase(t *testing.T) {
+	img := newImage(t, smallVolume)
+	fs, err := Format(img, Options{})
+	if err != nil {
+		t.Fatalf("Format: %v", err)
+	}
+
+	for i := 0; i < 5; i++ {
+		name := fmt.Sprintf("captura-%03d-larga.txt", i)
+		if err := fs.WriteFile(name, strings.NewReader("x")); err != nil {
+			t.Fatalf("WriteFile %d: %v", i, err)
+		}
+	}
+	if err := fs.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	disk := reload(t, img)
+	for i := 0; i < 5; i++ {
+		want := fmt.Sprintf("captura-%03d-larga.txt", i)
+		e, err := disk.Stat(want)
+		if err != nil {
+			t.Errorf("Stat(%q): %v", want, err)
+			continue
+		}
+		if e.Name != want {
+			t.Errorf("%q se lee como %q", want, e.Name)
+		}
+	}
+}
+
+func TestOpenRejectsNonFAT(t *testing.T) {
+	img := newImage(t, smallVolume)
+
+	if _, err := Open(img); !errors.Is(err, ErrNotFAT32) {
+		t.Fatalf("error = %v, se esperaba ErrNotFAT32 en un volumen vacio", err)
+	}
+}
+
+func TestOpenReadsBackTheGeometry(t *testing.T) {
+	img := newImage(t, mediumVolume)
+	fs, err := Format(img, Options{Label: "ARRANQUE", VolumeID: 0x0A0B0C0D})
+	if err != nil {
+		t.Fatalf("Format: %v", err)
+	}
+	made := fs.Info()
+
+	opened, err := Open(img)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	got := opened.Info()
+
+	if got.ClusterSize != made.ClusterSize || got.Clusters != made.Clusters ||
+		got.FatSectors != made.FatSectors || got.Label != "ARRANQUE" ||
+		got.VolumeID != 0x0A0B0C0D {
+		t.Fatalf("geometria releida %+v, se esperaba %+v", got, made)
+	}
+	if opened.FreeBytes() <= 0 {
+		t.Errorf("FreeBytes = %d", opened.FreeBytes())
+	}
+}
+
+func TestReadAPIErrors(t *testing.T) {
+	img := newImage(t, smallVolume)
+	fs, err := Format(img, Options{})
+	if err != nil {
+		t.Fatalf("Format: %v", err)
+	}
+	if err := fs.WriteFile("dir/uno.txt", strings.NewReader("uno")); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if err := fs.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	disk, err := Open(img)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	if _, err := disk.Stat("no-existe.txt"); !errors.Is(err, ErrNotFoundInVolume) {
+		t.Errorf("Stat de algo inexistente = %v", err)
+	}
+	if _, _, err := disk.OpenFile("dir"); err == nil {
+		t.Error("OpenFile sobre un directorio deberia fallar")
+	}
+	if _, err := disk.List("tampoco"); !errors.Is(err, ErrNotFoundInVolume) {
+		t.Errorf("List de algo inexistente = %v", err)
+	}
+
+	entries, err := disk.List("dir")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Name != "uno.txt" || entries[0].IsDir {
+		t.Fatalf("entradas = %+v", entries)
+	}
 }

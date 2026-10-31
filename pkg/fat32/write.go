@@ -269,12 +269,19 @@ func (fs *FileSystem) makeDirs(path string) (uint32, error) {
 }
 
 // lookup busca una entrada por nombre dentro de un directorio.
+//
+// Salta las entradas de etiqueta de volumen: comparten el espacio de nombres del
+// directorio, pero no son ficheros ni directorios. Sin esto, una etiqueta "EFI"
+// tapaba el directorio \EFI que exige UEFI.
 func (fs *FileSystem) lookup(dirCluster uint32, name string) (dirEntry, bool, error) {
 	data, err := fs.readDir(dirCluster)
 	if err != nil {
 		return dirEntry{}, false, err
 	}
 	for _, e := range parseDir(data) {
+		if e.attr&attrVolumeID != 0 {
+			continue
+		}
 		if strings.EqualFold(e.name, name) {
 			return e, true, nil
 		}
@@ -294,7 +301,8 @@ func (fs *FileSystem) findDir(dirCluster uint32, name string) (uint32, bool, err
 	return e.cluster, true, nil
 }
 
-// taken devuelve los nombres cortos ya usados en un directorio.
+// taken devuelve los nombres cortos ya usados en un directorio. Incluye la
+// etiqueta de volumen, que ocupa un nombre corto aunque no sea un fichero.
 func (fs *FileSystem) taken(dirCluster uint32) (map[string]bool, error) {
 	data, err := fs.readDir(dirCluster)
 	if err != nil {

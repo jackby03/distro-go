@@ -118,6 +118,12 @@ Los milestones estan en roadmap.md.
 
 ## Cerrados
 
+- [X] M3 — Arranque UEFI completo del live desde el ESP generado.
+  - Evidencia: out/live.img de 6 GiB con ESP de 4 GiB FAT32 (268 ficheros,
+    2,5 GiB), verificado con 7-Zip contra el ISO; arrancado en QEMU con OVMF
+    (-Uefi -NoGuestIso), menu de nuestro grub.cfg, escritorio de Mint operativo.
+  - Hallazgo: `persistent` sin `casper-rw` cuelga en Plymouth. Ver DG-27.
+
 - [X] M2 — GPT sobre imagen validado con una herramienta externa.
   - Evidencia: sfdisk 2.42.3 en Alpine, sin red, sobre out/test.img de 8 GiB.
     Disklabel gpt, Disk identifier 928d4912-3120-4c5f-ad86-9118bd1663fa,
@@ -168,3 +174,29 @@ Los milestones estan en roadmap.md.
     corto y byte de secuencia), y crecimiento de directorios.
   - Cierre: copiar EFI/boot y boot/grub del ISO al ESP, y `fsck.fat -n` limpio con
     `mdir`/`mtype` de mtools leyendo los ficheros.
+
+- [ ] DG-25 — Nombres originales vía Joliet (M3).
+  - xorriso omite la entrada Rock Ridge cuando el nombre solo difiere en
+    mayusculas, asi que `boot/grub/x86_64-efi/acpi.mod` llega del ISO como
+    `ACPI.MOD`. El nombre real solo esta en el arbol Joliet, que
+    `kdomanski/iso9660` no lee.
+  - Funcionalmente no rompe: GRUB y el firmware comparan sin distinguir caso en
+    FAT. Es fidelidad de nombres, no correccion.
+  - Cierre: leer el descriptor secundario Joliet, o decision escrita de aceptarlo.
+
+- [ ] DG-26 — Basura al final del nombre en un fichero del ISO (M3).
+  - `linuxiso.Walk` devuelve para `boot/grub/x86_64-efi/zfscrypt.mod` un nombre con
+    bytes de mas detras de un NUL (`zfscrypt.mod\x00x\x00H ...`). Es al concatenar
+    las entradas NM de Rock Ridge.
+  - Nuestro escritor lo tolera porque FAT corta el nombre largo en el NUL, pero la
+    ruta devuelta no sirve para volver a buscar el fichero.
+  - Cierre: recortar en el primer NUL al leer el nombre, o reportarlo upstream.
+
+- [ ] DG-27 — Persistencia de casper (M5, despues de ext4).
+  - `persistent persistent-path=/` cuelga el arranque si no existe el fichero
+    `casper-rw`, y no vale cualquier cosa: casper lo monta con `-o loop`, asi que
+    tiene que contener un sistema de ficheros ext2/3/4. Por eso la persistencia
+    depende del escritor de ext4.
+  - Sin persistencia el live arranca perfectamente: es M3 cumplido.
+  - Cierre: crear un `casper-rw` de tamano fijo con ext4 dentro y arrancar con
+    `persistent`; los cambios en /home sobreviven al reinicio.

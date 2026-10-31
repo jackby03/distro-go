@@ -115,6 +115,9 @@ Flags de partition:
   --esp     tamano de la particion EFI, por defecto 512MiB
   --force   sobrescribir la imagen si ya existe
   --format-esp  formatear la particion EFI en FAT32 (por defecto si)
+  --boot-from   ISO del que copiar el arranque al ESP
+  --with-squashfs  copiar tambien el rootfs comprimido (ESP grande)
+  --kernel-args parametros de arranque del kernel
 
 El comando install llega en M6. Hasta entonces, todo se valida contra imagenes.
 `)

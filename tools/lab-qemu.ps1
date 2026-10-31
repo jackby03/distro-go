@@ -34,6 +34,15 @@
 .PARAMETER Headless
     Sin ventana: consola serie en el terminal. Util para ejecuciones desatendidas.
 
+.PARAMETER NoGuestIso
+    No conecta el ISO del invitado. Es lo que hace falta para arrancar el disco
+    bajo prueba: con un CD conectado, el firmware arranca primero el medio
+    extraible y el sistema de la imagen nunca se llega a probar.
+
+.PARAMETER ResetNvram
+    Borra out/OVMF_VARS.fd antes de arrancar, para que OVMF vuelva a su orden de
+    arranque de fabrica. Util cuando la NVRAM conserva una entrada vieja al CD.
+
 .EXAMPLE
     .\tools\lab-qemu.ps1
 
@@ -41,7 +50,7 @@
     .\tools\lab-qemu.ps1 -Network -Image out\test.img
 
 .EXAMPLE
-    .\tools\lab-qemu.ps1 -Uefi -Image out\test.img
+    .\tools\lab-qemu.ps1 -Uefi -NoGuestIso -Image out\live.img
 #>
 [CmdletBinding()]
 param(
@@ -51,7 +60,9 @@ param(
     [int]$Cpus = 2,
     [switch]$Network,
     [switch]$Uefi,
-    [switch]$Headless
+    [switch]$Headless,
+    [switch]$NoGuestIso,
+    [switch]$ResetNvram
 )
 
 $ErrorActionPreference = "Stop"
@@ -89,27 +100,33 @@ function Resolve-Ovmf {
 if (-not (Test-Path $Image)) {
     throw "No existe la imagen '$Image'. Generala con: .\out\distrogo.exe partition --image $Image --size 8GiB"
 }
-if (-not (Test-Path $Iso)) {
+if (-not $NoGuestIso -and -not (Test-Path $Iso)) {
     throw "No existe el ISO '$Iso'. Comprueba testdata/isos/."
 }
 
 $qemu = Resolve-Qemu
 $qemuArgs = @(
     "-m", "$MemoryMiB",
-    "-smp", "$Cpus",
-    "-drive", "file=$Iso,media=cdrom",
-    "-drive", "file=$Image,format=raw,if=virtio"
+    "-smp", "$Cpus"
 )
+
+if (-not $NoGuestIso) {
+    $qemuArgs += @("-drive", "file=$Iso,media=cdrom")
+}
+$qemuArgs += @("-drive", "file=$Image,format=raw,if=virtio")
 
 if ($Network) { $qemuArgs += @("-nic", "user,model=e1000") }
 
 if ($Uefi) {
+    if ($ResetNvram -and (Test-Path "out/OVMF_VARS.fd")) {
+        Remove-Item "out/OVMF_VARS.fd" -Force
+    }
     $ovmf = Resolve-Ovmf $qemu
     $qemuArgs += @(
         "-drive", "if=pflash,format=raw,readonly=on,file=$($ovmf.Code)",
         "-drive", "if=pflash,format=raw,file=$($ovmf.Vars)"
     )
-} else {
+} elseif (-not $NoGuestIso) {
     $qemuArgs += @("-boot", "order=d")
 }
 
@@ -119,7 +136,11 @@ if ($Headless) {
 
 Write-Host ""
 Write-Host "QEMU : $qemu"
-Write-Host "ISO  : $Iso"
+if ($NoGuestIso) {
+    Write-Host "ISO  : (ninguno: arranca el disco)"
+} else {
+    Write-Host "ISO  : $Iso"
+}
 Write-Host "disco: $Image"
 Write-Host "modo : $(if ($Uefi) { 'UEFI (OVMF)' } else { 'BIOS (SeaBIOS)' })$(if ($Network) { ' + red NAT' })"
 Write-Host ""
@@ -128,7 +149,10 @@ Write-Host @'
 Invitado: Alpine live. Todo corre en RAM, asi que cada arranque empieza limpio.
 Login: root, sin contrasena.
 
-Validacion SIN red:
+Con -NoGuestIso no hay invitado: el firmware arranca lo que haya en la imagen.
+Si el disco no arranca, prueba -ResetNvram para devolver OVMF a su orden de fabrica.
+
+Validacion SIN red (con el ISO de Alpine conectado):
   modprobe vfat
   mkdir -p /mnt/esp
   mount -t vfat /dev/vda1 /mnt/esp

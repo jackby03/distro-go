@@ -9,8 +9,10 @@ import (
 	"strings"
 
 	"distrogo/pkg/blockdev"
+	"distrogo/pkg/efilayout"
 	"distrogo/pkg/fat32"
 	"distrogo/pkg/gpt"
+	"distrogo/pkg/linuxiso"
 )
 
 // runPartition crea una imagen de disco y le escribe una tabla GPT con dos
@@ -24,6 +26,9 @@ func (a *App) runPartition(args []string) int {
 	espFlag := fs.String("esp", "512MiB", "tamano de la particion EFI")
 	force := fs.Bool("force", false, "sobrescribir la imagen si ya existe")
 	formatESP := fs.Bool("format-esp", true, "formatear la particion EFI en FAT32")
+	bootFrom := fs.String("boot-from", "", "ISO del que copiar el arranque al ESP")
+	withSquashfs := fs.Bool("with-squashfs", false, "copiar tambien el rootfs comprimido al ESP")
+	kernelArgs := fs.String("kernel-args", "", "parametros de arranque del kernel, separados por espacios")
 
 	if err := fs.Parse(args); err != nil {
 		return exitUsage
@@ -105,6 +110,7 @@ func (a *App) runPartition(args []string) int {
 	// La ESP es una particion, asi que se formatea a traves de una vista
 	// recortada del dispositivo. Es el mismo camino que usara el root en M5.
 	var espInfo *fat32.Info
+	var espContent *efilayout.Result
 	if *formatESP {
 		esp := table.Partitions[0]
 		offset := int64(esp.FirstLBA) * int64(layout.SectorSize)
@@ -113,20 +119,64 @@ func (a *App) runPartition(args []string) int {
 			fmt.Fprintf(a.Err, "error: preparar la ESP: %v\n", secErr)
 			return exitError
 		}
-		vol, fmtErr := fat32.Format(section, fat32.Options{Label: "EFI"})
+		vol, fmtErr := fat32.Format(section, fat32.Options{Label: "SYSTEM"})
 		if fmtErr != nil {
 			fmt.Fprintf(a.Err, "error: formatear la ESP: %v\n", fmtErr)
 			return exitError
 		}
 		info := vol.Info()
 		espInfo = &info
+
+		if *bootFrom != "" {
+			res, err := a.populateESP(vol, *bootFrom, *withSquashfs, *kernelArgs)
+			if err != nil {
+				fmt.Fprintf(a.Err, "error: %v\n", err)
+				return exitError
+			}
+			espContent = &res
+		}
+
+		// Volcar la FAT y el resumen de espacio libre antes de soltar el volumen.
+		if err := vol.Close(); err != nil {
+			fmt.Fprintf(a.Err, "error: cerrar la ESP: %v\n", err)
+			return exitError
+		}
 	}
 
-	a.writePartitionSummary(*imagePath, size, img.SectorSize(), layout, table, espInfo)
+	a.writePartitionSummary(*imagePath, size, img.SectorSize(), layout, table, espInfo, espContent)
 	return exitOK
 }
 
-func (a *App) writePartitionSummary(path string, size int64, sectorSize int, l gpt.Layout, t *gpt.Table, esp *fat32.Info) {
+// populateESP copia al ESP el arranque del ISO y su grub.cfg.
+func (a *App) populateESP(vol *fat32.FileSystem, isoPath string, withSquashfs bool, kernelArgs string) (efilayout.Result, error) {
+	iso, err := linuxiso.Open(isoPath)
+	if err != nil {
+		return efilayout.Result{}, err
+	}
+	defer iso.Close()
+
+	facts, err := iso.Facts()
+	if err != nil {
+		return efilayout.Result{}, err
+	}
+
+	var args []string
+	if s := strings.TrimSpace(kernelArgs); s != "" {
+		args = strings.Fields(s)
+	}
+
+	res, err := efilayout.Write(iso, vol, efilayout.Spec{
+		Title:        facts.Label,
+		KernelArgs:   args,
+		CopySquashfs: withSquashfs,
+	})
+	if err != nil {
+		return efilayout.Result{}, err
+	}
+	return res, nil
+}
+
+func (a *App) writePartitionSummary(path string, size int64, sectorSize int, l gpt.Layout, t *gpt.Table, esp *fat32.Info, content *efilayout.Result) {
 	fmt.Fprintf(a.Out, "imagen     : %s (%s, %d sectores de %d)\n",
 		path, blockdev.HumanSize(size), l.TotalSectors, sectorSize)
 	fmt.Fprintf(a.Out, "disco GUID : %s\n", t.DiskGUID)
@@ -140,6 +190,10 @@ func (a *App) writePartitionSummary(path string, size int64, sectorSize int, l g
 	if esp != nil {
 		fmt.Fprintf(a.Out, "ESP        : FAT32, cluster de %d bytes, %d clusters, etiqueta %s\n",
 			esp.ClusterSize, esp.Clusters, esp.Label)
+	}
+	if content != nil {
+		fmt.Fprintf(a.Out, "arranque   : %d ficheros, %s copiados al ESP\n",
+			content.Files, blockdev.HumanSize(content.Bytes))
 	}
 	fmt.Fprintln(a.Out, "verificado  : firma, CRC de cabecera y CRC de entradas correctos")
 }

@@ -426,7 +426,7 @@ func TestPartitionFormatsESPinFAT32(t *testing.T) {
 	if boot[510] != 0x55 || boot[511] != 0xAA {
 		t.Error("falta la firma de arranque del BPB")
 	}
-	if got := string([]byte{boot[0x47], boot[0x48], boot[0x49]}); got != "EFI" {
+	if got := strings.TrimRight(string(boot[0x47:0x52]), " "); got != "SYSTEM" {
 		t.Errorf("etiqueta de volumen = %q", got)
 	}
 }

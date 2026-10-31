@@ -65,14 +65,15 @@ No se re-discuten sin abrir un DG-xx que lo justifique.
     Cumplido: sfdisk 2.42.3 en Alpine confirma GPT, dos particiones, header 1.0,
     2 de 128 entradas y "No errors detected".
 
-- [ ] M3 — FAT32, ESP e ISO live
+- [X] M3 — FAT32, ESP e ISO live
   - Entrega: formateo FAT32 del ESP, copia del shim y GRUB del ISO, grub.cfg generado
     y arranque de un sistema live persistente.
   - Ficheros: pkg/fat32, pkg/efilayout, pkg/linuxiso (version 1: ISO9660 y deteccion
     de casper).
   - Respuestas: ~5.
   - Criterio de salida: QEMU con OVMF arranca Mint live desde la imagen generada.
-  - Bloqueado por DG-01 (falta OVMF).
+    Cumplido: shim -> GRUB con nuestro grub.cfg -> kernel -> initrd -> casper ->
+    squashfs -> escritorio de Mint. La persistencia queda pendiente de ext4 (DG-27).
 
 - [ ] M4 — Lector de SquashFS
   - Entrega: pkg/linuxiso completo, con los tres workarounds documentados, y
