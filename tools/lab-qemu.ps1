@@ -130,7 +130,17 @@ if ($Uefi) {
     $qemuArgs += @("-boot", "order=d")
 }
 
-if ($Headless) {
+if ($SerialLog) {
+    $SerialLog = Join-Path (Get-Location) $SerialLog
+    $serialDir = Split-Path -Parent $SerialLog
+    if ($serialDir -and -not (Test-Path $serialDir)) { New-Item -ItemType Directory -Path $serialDir | Out-Null }
+
+    if ($Headless) {
+        $qemuArgs += @("-display", "none", "-serial", "file:$SerialLog")
+    } else {
+        $qemuArgs += @("-serial", "file:$SerialLog")
+    }
+} elseif ($Headless) {
     $qemuArgs += @("-display", "none", "-serial", "mon:stdio")
 }
 
@@ -142,6 +152,7 @@ if ($NoGuestIso) {
     Write-Host "ISO  : $Iso"
 }
 Write-Host "disco: $Image"
+if ($SerialLog) { Write-Host "consola: $SerialLog" }
 Write-Host "modo : $(if ($Uefi) { 'UEFI (OVMF)' } else { 'BIOS (SeaBIOS)' })$(if ($Network) { ' + red NAT' })"
 Write-Host ""
 
