@@ -1,7 +1,9 @@
-// Package linuxiso lee una ISO live: localiza casper/filesystem.squashfs, extrae
-// los hechos del volumen (compresor, bloque, ids, flags) y expone el rootfs como
-// rootfs.Source.
+// Package linuxiso lee un ISO live.
 //
-// No escribe nada: ni temporales ni NTFS. El contenido se sirve en streaming con
-// buffer acotado.
+// Abre la imagen ISO9660, localiza el kernel, el initrd y el rootfs comprimido de
+// un sistema live (casper, live o LiveOS) y los sirve como lectores, sin extraer
+// nada a disco: ni temporales ni NTFS de por medio.
+//
+// No interpreta el contenido del rootfs. Convertirlo en un arbol de ficheros
+// POSIX es trabajo de pkg/rootfs, en M4.
 package linuxiso
