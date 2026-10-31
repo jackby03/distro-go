@@ -48,7 +48,11 @@ func (t *target) Mkdir(e rootfs.Entry) error {
 	if err != nil {
 		return err
 	}
-	return mapErr("crear el directorio", e.Path, efs.Mkdir(e.Path))
+	if err := mapErr("crear el directorio", e.Path, efs.Mkdir(e.Path)); err != nil {
+		return err
+	}
+	t.heredar(e.Path)
+	return nil
 }
 
 func (t *target) Create(e rootfs.Entry) (io.WriteCloser, error) {
@@ -60,6 +64,7 @@ func (t *target) Create(e rootfs.Entry) (io.WriteCloser, error) {
 	if err != nil {
 		return nil, mapErr("crear el fichero", e.Path, err)
 	}
+	t.heredar(e.Path)
 	return file, nil
 }
 
@@ -68,7 +73,11 @@ func (t *target) Symlink(e rootfs.Entry) error {
 	if err != nil {
 		return err
 	}
-	return mapErr("crear el symlink", e.Path, efs.Symlink(e.Link, e.Path))
+	if err := mapErr("crear el symlink", e.Path, efs.Symlink(e.Link, e.Path)); err != nil {
+		return err
+	}
+	t.heredar(e.Path)
+	return nil
 }
 
 func (t *target) Hardlink(e rootfs.Entry) error {
@@ -76,7 +85,11 @@ func (t *target) Hardlink(e rootfs.Entry) error {
 	if err != nil {
 		return err
 	}
-	return mapErr("crear el hardlink", e.Path, efs.Link(e.Link, e.Path))
+	if err := mapErr("crear el hardlink", e.Path, efs.Link(e.Link, e.Path)); err != nil {
+		return err
+	}
+	t.heredar(e.Path)
+	return nil
 }
 
 func (t *target) Mknod(e rootfs.Entry) error {
@@ -112,14 +125,26 @@ func (t *target) Chmod(e rootfs.Entry) error {
 	return mapErr("cambiar permisos de", e.Path, efs.Chmod(e.Path, e.Mode))
 }
 
+// heredar anota el dueno con el que nace una entrada nueva: el de su padre.
+//
+// Una entrada creada hereda el dueno del directorio que la contiene: dentro de
+// /home/ana, que es 1000:1000, un fichero nace 1000:1000 aunque queramos root.
+// Si el padre no esta en la tabla es que no lo hemos tocado, y entonces no se
+// supone nada: se borra la entrada para que el proximo Chown pregunte.
+func (t *target) heredar(path string) {
+	padre, conocido := t.duenos[pathpkg.Dir(path)]
+	if !conocido {
+		delete(t.duenos, path)
+		return
+	}
+	t.duenos[path] = padre
+}
+
 func (t *target) Chown(e rootfs.Entry) error {
 	quiere := [2]uint32{e.UID, e.GID}
 
-	// Si el padre ya tiene ese dueno, el hijo nace con el: no hay nada que
-	// cambiar. En un rootfs eso cubre casi todo el arbol. Un padre desconocido
-	// no vale como 0:0: hay que preguntar, porque puede ser el home de alguien.
-	if dueno, conocido := t.duenos[pathpkg.Dir(e.Path)]; conocido && dueno == quiere {
-		t.duenos[e.Path] = quiere
+	// Solo se salta si consta que ya tiene ese dueno.
+	if actual, conocido := t.duenos[e.Path]; conocido && actual == quiere {
 		return nil
 	}
 

@@ -393,3 +393,34 @@ func TestAdminGroupFailsWhenNothingQualifies(t *testing.T) {
 		t.Fatal("sin grupo de administracion se tiene que avisar, no seguir")
 	}
 }
+
+func TestUserGroupLine(t *testing.T) {
+	line, err := cuenta(User{}).Group()
+	if err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+	if line != "jack:x:1000:" {
+		t.Fatalf("linea = %q, queria jack:x:1000:", line)
+	}
+}
+
+func TestGroupByGIDAndName(t *testing.T) {
+	group := "root:x:0:\nsudo:x:27:\njack:x:1000:\n"
+
+	if nombre, ok := GroupByGID(group, 1000); !ok || nombre != "jack" {
+		t.Fatalf("GroupByGID(1000) = %q %v", nombre, ok)
+	}
+	if _, ok := GroupByGID(group, 4242); ok {
+		t.Fatal("un GID que no esta no puede devolver grupo")
+	}
+	if !GroupByName(group, "jack") {
+		t.Fatal("GroupByName(jack) deberia encontrarlo")
+	}
+	if GroupByName(group, "ana") {
+		t.Fatal("GroupByName(ana) no deberia encontrarlo")
+	}
+	// Los comentarios no son grupos.
+	if GroupByName("# jack:x:1000:\n", "jack") {
+		t.Fatal("una linea comentada no es un grupo")
+	}
+}

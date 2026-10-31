@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -278,4 +279,51 @@ func AddMembers(content, group string, members ...string) (string, error) {
 		return "", fmt.Errorf("el grupo %q no existe en /etc/group", group)
 	}
 	return strings.Join(lines, "\n"), nil
+}
+
+// Group devuelve la linea de /etc/group del grupo propio del usuario.
+//
+// Todo usuario necesita su grupo con el mismo numero que el UID (useradd -U). Sin
+// esa linea, getgrgid no sabe poner nombre al GID y el sistema avisa con
+// "groups: cannot find name for group ID 1000" en cada inicio de sesion.
+func (u User) Group() (string, error) {
+	if err := u.Validate(); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%s:x:%d:", u.Name, u.GID), nil
+}
+
+// GroupByGID busca en el contenido de /etc/group el nombre del grupo con ese GID.
+//
+// Devuelve ok=false si no hay ninguno. Sirve para no anadir un grupo con un
+// numero que ya esta ocupado por otro.
+func GroupByGID(content string, gid int) (name string, ok bool) {
+	for _, line := range strings.Split(content, "\n") {
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		fields := strings.Split(line, ":")
+		if len(fields) < 4 {
+			continue
+		}
+		n, err := strconv.Atoi(fields[2])
+		if err != nil || n != gid {
+			continue
+		}
+		return fields[0], true
+	}
+	return "", false
+}
+
+// GroupByName dice si el grupo ya existe con ese nombre.
+func GroupByName(content, name string) bool {
+	for _, line := range strings.Split(content, "\n") {
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if first, _, ok := strings.Cut(line, ":"); ok && first == name {
+			return true
+		}
+	}
+	return false
 }

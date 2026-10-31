@@ -470,3 +470,54 @@ func TestInstallTargetUsesDistroNameWhenNoTitle(t *testing.T) {
 		t.Fatalf("el menu no lleva el nombre de la distro:\n%s", cfg)
 	}
 }
+
+func TestCreateUserOwnsTheWholeHome(t *testing.T) {
+	root := newUserFS(t)
+	app := &App{Out: &bytes.Buffer{}, Err: &bytes.Buffer{}}
+
+	res, err := app.createUser(root, nuevaCuenta(t, "ana", 1000))
+	if err != nil {
+		t.Fatalf("createUser: %v", err)
+	}
+	if res.HomeOwned == 0 {
+		t.Fatal("no se ajusto el dueno de ninguna entrada del home")
+	}
+
+	// /etc/skel es de root, pero el home entero tiene que ser del usuario: si
+	// .config se queda de root, xfconfd no puede escribir y la sesion grafica
+	// se cae con "Unable to load a failsafe session".
+	ajenas := []string{}
+	err = ext4fs.Source(root, "home/ana").Walk(func(e rootfs.Entry) error {
+		if e.Type == rootfs.TypeSymlink {
+			return nil
+		}
+		if e.UID != 1000 || e.GID != 1000 {
+			ajenas = append(ajenas, e.Path)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk: %v", err)
+	}
+	if len(ajenas) > 0 {
+		t.Fatalf("estas entradas del home no son de ana: %v", ajenas)
+	}
+}
+
+func TestCreateUserRefusesTakenGID(t *testing.T) {
+	root := newUserFS(t)
+	// El GID 1000 ya lo tiene otro grupo: reutilizarlo dejaria al usuario sin
+	// grupo propio y con un nombre prestado.
+	if err := root.OverwriteFile("etc/group", []byte("root:x:0:\nsudo:x:27:\nusuarios:x:1000:\n")); err != nil {
+		t.Fatalf("OverwriteFile: %v", err)
+	}
+
+	app := &App{Out: &bytes.Buffer{}, Err: &bytes.Buffer{}}
+	_, err := app.createUser(root, nuevaCuenta(t, "ana", 1000))
+	if err == nil {
+		t.Fatal("un GID ya usado tiene que abortar la creacion de la cuenta")
+	}
+	if !strings.Contains(err.Error(), "1000") {
+		t.Fatalf("el error deberia decir que GID esta ocupado: %v", err)
+	}
+}

@@ -116,6 +116,7 @@ type userResult struct {
 	AdminGroup string
 	HomeFiles  int64
 	HomeDirs   int64
+	HomeOwned  int
 }
 
 // createUser crea la cuenta del sistema instalado.
@@ -199,6 +200,15 @@ func (a *App) createUser(root *ext4fs.FS, u accounts.User) (userResult, error) {
 	res.HomeFiles = stats.Files
 	res.HomeDirs = stats.Dirs
 
+	// El esqueleto es de root: el home entero tiene que quedar a nombre del
+	// usuario o no podra escribir en su propia configuracion, y la sesion
+	// grafica se cae.
+	cambiados, err := chownHome(root, homePath, uint32(u.UID), uint32(u.GID))
+	if err != nil {
+		return res, err
+	}
+	res.HomeOwned = cambiados
+
 	// 3. Las lineas, al final. La contrasena va ya hasheada: en claro no llega
 	// hasta aqui.
 	passwdLine, err := u.Passwd()
@@ -209,7 +219,13 @@ func (a *App) createUser(root *ext4fs.FS, u accounts.User) (userResult, error) {
 	if err != nil {
 		return res, err
 	}
-	groupContent, err := accounts.AddMembers(group, admin, u.Name)
+	// 4. El grupo propio, que es lo que hace que getgrgid sepa poner nombre al
+	// GID. Sin el, cada inicio de sesion avisa de que el grupo 1000 no existe.
+	groupContent, err := groupWithOwnGroup(group, u)
+	if err != nil {
+		return res, err
+	}
+	groupContent, err = accounts.AddMembers(groupContent, admin, u.Name)
 	if err != nil {
 		return res, err
 	}
@@ -360,4 +376,57 @@ func prettyName(root *ext4fs.FS) string {
 		return strings.TrimSpace(valor)
 	}
 	return ""
+}
+
+// groupWithOwnGroup devuelve /etc/group con el grupo propio del usuario dentro.
+//
+// Todo usuario necesita su grupo con el mismo numero que el UID (useradd -U). Si
+// el GID ya lo usa otro grupo se aborta: reutilizarlo daria un usuario sin grupo
+// propio y con un nombre prestado, y eso se nota despues en cualquier permiso.
+func groupWithOwnGroup(group string, u accounts.User) (string, error) {
+	if accounts.GroupByName(group, u.Name) {
+		return group, nil
+	}
+	if nombre, ocupado := accounts.GroupByGID(group, u.GID); ocupado {
+		return "", fmt.Errorf("el GID %d ya lo usa el grupo %q: elige otro UID con --uid", u.GID, nombre)
+	}
+
+	linea, err := u.Group()
+	if err != nil {
+		return "", err
+	}
+	return group + lineToAppend(group, linea), nil
+}
+
+// chownHome deja el arbol del home a nombre del usuario.
+//
+// /etc/skel es de root, y una entrada creada hereda el dueno del directorio que la
+// contiene, pero los permisos de skel se copian tal cual. Sin este paso, ~/.config
+// queda de root y la sesion grafica no puede escribir en ella: xfconfd no guarda
+// nada y xfce4-session se cae con "Unable to load a failsafe session".
+//
+// Los symlinks se dejan como estan: cambiar el dueno de un enlace no afecta al
+// acceso y hay que hacerlo sin seguirlo, cosa que go-diskfs no ofrece.
+func chownHome(root *ext4fs.FS, dir string, uid, gid uint32) (int, error) {
+	tgt := root.Target()
+	cambiados := 0
+
+	err := ext4fs.Source(root, dir).Walk(func(e rootfs.Entry) error {
+		if e.Type == rootfs.TypeSymlink {
+			return nil
+		}
+
+		e.Path = dir + "/" + e.Path
+		e.UID = uid
+		e.GID = gid
+		if err := tgt.Chown(e); err != nil {
+			return err
+		}
+		cambiados++
+		return nil
+	})
+	if err != nil {
+		return cambiados, fmt.Errorf("dejar el home a nombre del usuario: %w", err)
+	}
+	return cambiados, nil
 }
