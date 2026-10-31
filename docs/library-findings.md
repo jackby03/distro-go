@@ -74,6 +74,14 @@ Solucion adoptada: si Size es 0, crear el fichero vacio y no leer nada.
   contenido es valido para ext4 y e2fsck no se queja.
 - Los dos son parcheables, en torno a 60 lineas, si algun dia molestan. La licencia es
   Apache-2.0, sin ataduras.
+- ReadDir devuelve FileInfo sin permisos. Los construye con `mode: de.Type()`,
+  que solo lleva el tipo de inodo; los bits de permiso se quedan fuera. Copiar un
+  arbol leyendo por ReadDir deja los ficheros con modo 0000 y no da ningun error.
+  Solucion adoptada: un Stat por entrada, que si devuelve permissionsToMode(). Lo
+  paga pkg/ext4fs.Source, que es quien recorre el volumen.
+- Chmod necesita los bits especiales como os.ModeSetuid, ModeSetgid y ModeSticky,
+  no como los digitos octales 4000, 2000 y 1000. Un 0o4755 se acepta sin quejarse
+  y no pone el setuid: el bit cae en zona muerta de os.FileMode.
 
 ## Lo que reutilizan los milestones siguientes
 
