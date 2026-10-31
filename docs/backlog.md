@@ -272,3 +272,16 @@ Los milestones estan en roadmap.md.
   - Medido: `flash` de 8 GiB al HDD por USB 3.0 en 1m15s (109 MB/s), con
     verificacion byte a byte correcta. `install --apply` queda para depurar.
   - Cierre: el disco flasheado arranca en QEMU desde la unidad fisica.
+
+- [ ] DG-34 — Secure Boot rechaza el arranque en hardware real (M7).
+  - En un portatil con Secure Boot activo, el firmware rechaza la cadena de arranque
+    de la ESP con "firmas no validas". En QEMU/OVMF sin Secure Boot arranca.
+  - Causa probable: la ESP lleva el shim y el GRUB de la distro tal cual vienen en el
+    ISO, pero el kernel que instalamos no esta firmado para Secure Boot, o la cadena
+    de confianza no queda completa al reescribir el grub.cfg.
+  - Palancas: arrancar con Secure Boot desactivado (workaround, no producto); copiar
+    la cadena firmada completa de la distro (shim, grub y kernel con sus firmas); o
+    firmar nosotros con una clave propia y meterla en MokManager, que es lo que hace
+    cualquier herramienta que quiera funcionar en equipos ajenos.
+  - Cierre: un portatil con Secure Boot activo arranca el sistema instalado sin tocar
+    la BIOS.
