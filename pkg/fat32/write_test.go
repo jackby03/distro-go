@@ -699,3 +699,53 @@ func TestReadAPIErrors(t *testing.T) {
 		t.Fatalf("entradas = %+v", entries)
 	}
 }
+
+func TestRemoveAndReplace(t *testing.T) {
+	img := newImage(t, smallVolume)
+	fs, err := Format(img, Options{})
+	if err != nil {
+		t.Fatalf("Format: %v", err)
+	}
+
+	if err := fs.WriteFile("nota.txt", strings.NewReader("contenido largo de la primera version")); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if err := fs.WriteFile("otro.txt", strings.NewReader("intacto")); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if err := fs.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	disk := reload(t, img)
+	freeBefore := disk.freeClusters()
+
+	if err := disk.ReplaceFile("nota.txt", strings.NewReader("corto")); err != nil {
+		t.Fatalf("ReplaceFile: %v", err)
+	}
+	if err := disk.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	disk = reload(t, img)
+	if got := readPath(t, disk, "nota.txt"); string(got) != "corto" {
+		t.Errorf("contenido = %q, se esperaba \"corto\"", got)
+	}
+	if got := readPath(t, disk, "otro.txt"); string(got) != "intacto" {
+		t.Errorf("el otro fichero se altero: %q", got)
+	}
+	// Los clusters del contenido viejo tienen que haber vuelto a la lista libre.
+	if free := disk.freeClusters(); free < freeBefore {
+		t.Errorf("clusters libres %d, antes %d", free, freeBefore)
+	}
+
+	if err := disk.Remove("no-existe.txt"); !errors.Is(err, ErrNotFoundInVolume) {
+		t.Errorf("borrar algo inexistente = %v", err)
+	}
+	if err := disk.Remove("otro.txt"); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+	if _, err := disk.Stat("otro.txt"); !errors.Is(err, ErrNotFoundInVolume) {
+		t.Error("el fichero deberia haber desaparecido")
+	}
+}

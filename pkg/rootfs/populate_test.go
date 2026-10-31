@@ -129,6 +129,7 @@ func testTree() *fakeSource {
 			"etc/motd":      "hola mundo\n",
 			"usr/bin/sudo":  "SUDOBIN\n",
 			"usr/bin/sudo2": "HARD\n",
+			"usr/bin/sudo3": "HARD\n",
 		},
 	}
 }
@@ -252,8 +253,12 @@ func TestPopulateToleratesUnsupported(t *testing.T) {
 	if stats.Hardlinks != 0 || stats.Devices != 0 {
 		t.Errorf("no deberian contarse como aplicados: %+v", stats)
 	}
-	if stats.Files != 3 || stats.Bytes != 24 {
+	// El hardlink no soportado se copia: el fichero tiene que existir igual.
+	if stats.Files != 4 || stats.Bytes != 29 {
 		t.Errorf("el resto deberia copiarse igual: %+v", stats)
+	}
+	if _, ok := tgt.content["usr/bin/sudo3"]; !ok {
+		t.Error("el segundo camino del hardlink deberia existir como copia")
 	}
 }
 

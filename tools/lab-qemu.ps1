@@ -152,22 +152,37 @@ Login: root, sin contrasena.
 Con -NoGuestIso no hay invitado: el firmware arranca lo que haya en la imagen.
 Si el disco no arranca, prueba -ResetNvram para devolver OVMF a su orden de fabrica.
 
-Validacion SIN red (con el ISO de Alpine conectado):
-  modprobe vfat
-  mkdir -p /mnt/esp
-  mount -t vfat /dev/vda1 /mnt/esp
-  ls -la /mnt/esp
-  umount /mnt/esp
-  sfdisk -l /dev/vda
+Antes de regenerar la imagen, apaga la VM: QEMU mantiene el fichero abierto y el
+invitado seguiria viendo la version anterior.
 
-Si hacen falta paquetes que no estan en el CD (dosfstools, mtools):
+Herramientas, sin red (e2fsprogs y sfdisk vienen en el propio CD):
+  apk add --no-cache e2fsprogs sfdisk
+
+Herramientas que NO estan en el CD (dosfstools, mtools) y necesitan el repositorio:
   ip link set eth0 up
   udhcpc -i eth0
   echo "https://dl-cdn.alpinelinux.org/alpine/v3.24/main" >> /etc/apk/repositories
   echo "https://dl-cdn.alpinelinux.org/alpine/v3.24/community" >> /etc/apk/repositories
   apk update
-  apk add --no-cache dosfstools mtools
+  apk add --no-cache e2fsprogs dosfstools mtools
+
+Comprobar la tabla de particiones:
+  sfdisk -l /dev/vda
+  sfdisk --verify /dev/vda
+
+Comprobar el root ext4:
+  e2fsck -fn /dev/vda2
+  mount -t ext4 -o ro /dev/vda2 /mnt
+  ls -ln /mnt | head
+  du -sh /mnt
+  find /mnt -perm -4000 | wc -l
+  umount /mnt
+
+Comprobar la ESP FAT32:
   fsck.fat -n -v /dev/vda1
+  mdir -i /dev/vda1 ::/
+  mdir -i /dev/vda1 ::/EFI/boot
+  mount -t vfat /dev/vda1 /mnt && ls -la /mnt && umount /mnt
 
 Apagar con: poweroff
 '@

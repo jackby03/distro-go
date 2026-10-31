@@ -38,6 +38,10 @@ type Spec struct {
 	// grubx64.efi del ISO no es autosuficiente, cosa que solo se sabe arrancando;
 	// por defecto se copia.
 	SkipGrubModules bool
+	// SkipKernelAndInitrd no copia el kernel ni el initrd del ISO. Es lo que
+	// quiere una instalacion real: el sistema arranca con los suyos, que estan
+	// dentro del rootfs, no con los del modo live.
+	SkipKernelAndInitrd bool
 }
 
 // Result resume lo que se ha copiado.
@@ -136,11 +140,13 @@ func plan(iso *linuxiso.ISO, facts linuxiso.Facts, spec Spec, kernelDest, initrd
 		}
 	}
 
-	if err := add(facts.Kernel, kernelDest); err != nil {
-		return nil, err
-	}
-	if err := add(facts.Initrd, initrdDest); err != nil {
-		return nil, err
+	if !spec.SkipKernelAndInitrd {
+		if err := add(facts.Kernel, kernelDest); err != nil {
+			return nil, err
+		}
+		if err := add(facts.Initrd, initrdDest); err != nil {
+			return nil, err
+		}
 	}
 
 	if spec.CopySquashfs {

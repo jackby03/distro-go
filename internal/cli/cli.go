@@ -42,6 +42,8 @@ func (a *App) Run(args []string) int {
 		return a.runList(args[1:])
 	case "partition":
 		return a.runPartition(args[1:])
+	case "boot":
+		return a.runBoot(args[1:])
 	case "help", "-h", "--help":
 		a.printUsage()
 		return exitOK
@@ -100,10 +102,12 @@ func (a *App) printUsage() {
 Uso:
   distrogo list [--json] [--allow-non-usb]
   distrogo partition --image <ruta> [--size 8GiB] [--esp 512MiB] [--force]
+  distrogo boot --image <ruta> [--title <texto>]
 
 Comandos:
   list       discos de la maquina, su estado y lo que se destruiria al escribir
   partition  crea una imagen de disco con tabla GPT, ESP y root
+  boot       deja arrancando el sistema ya volcado en una imagen
 
 Flags de list:
   --json            salida JSON para scripts
@@ -116,6 +120,8 @@ Flags de partition:
   --force   sobrescribir la imagen si ya existe
   --format-esp  formatear la particion EFI en FAT32 (por defecto si)
   --format-root formatear la particion root en ext4 (por defecto si)
+  --populate    volcar el rootfs del ISO en la particion root (necesita --boot-from)
+  --install     dejar el disco arrancando el sistema instalado (implica --populate)
   --boot-from   ISO del que copiar el arranque al ESP
   --with-squashfs  copiar tambien el rootfs comprimido (ESP grande)
   --kernel-args parametros de arranque del kernel

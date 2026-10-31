@@ -158,6 +158,10 @@ func Open(dev blockdev.Writable, offset, size int64) (*FS, error) {
 		return nil, fmt.Errorf("%w: sector de %d bytes", ErrBadSize, dev.SectorSize())
 	}
 
+	if err := ensureChecksumSeed(dev, offset); err != nil {
+		return nil, err
+	}
+
 	st := &storage{dev: dev, offset: offset, size: size}
 	efs, err := ext4.Read(st, size, 0, sectorSize512)
 	if err != nil {

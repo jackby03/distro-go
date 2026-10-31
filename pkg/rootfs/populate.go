@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"time"
 )
 
 // ErrUnsupported indica que el destino no sabe representar esa entrada. Sirve
@@ -19,6 +20,10 @@ type PopulateOptions struct {
 	// TolerateUnsupported sigue adelante cuando el destino devuelve
 	// ErrUnsupported, contandolo en Stats.Unsupported.
 	TolerateUnsupported bool
+	// Progress, si no es nil, se llama periodicamente con lo que lleva y la
+	// entrada que esta procesando. Sirve para no dejar al usuario veinte minutos
+	// mirando una pantalla muda sin saber si avanza.
+	Progress func(stats Stats, current string)
 }
 
 // Stats resume lo que se ha volcado.
@@ -49,6 +54,7 @@ func Populate(src Source, tgt Target, opts PopulateOptions) (Stats, error) {
 	buf := make([]byte, bufSize)
 
 	var stats Stats
+	lastReport := time.Now()
 	var dirs []Entry
 	firstPath := make(map[uint64]string)
 
@@ -67,6 +73,11 @@ func Populate(src Source, tgt Target, opts PopulateOptions) (Stats, error) {
 	}
 
 	err := src.Walk(func(e Entry) error {
+		if opts.Progress != nil && time.Since(lastReport) >= 500*time.Millisecond {
+			opts.Progress(stats, e.Path)
+			lastReport = time.Now()
+		}
+
 		switch e.Type {
 		case TypeDir:
 			if _, err := handle(tgt.Mkdir(e), "crear el directorio", e); err != nil {
@@ -83,20 +94,21 @@ func Populate(src Source, tgt Target, opts PopulateOptions) (Stats, error) {
 
 		case TypeRegular:
 			// Un hardlink se escribe una vez y las demas rutas apuntan a la
-			// primera. Duplicar el contenido tambien seria valido, pero engorda
-			// el volumen sin necesidad.
+			// primera. Si el destino no sabe enlazar, se copia el contenido: es
+			// peor en espacio, pero el fichero existe, que es lo que importa.
 			if e.Nlink > 1 {
 				if first, ok := firstPath[e.Inode]; ok {
-					ok, err := handle(tgt.Hardlink(Entry{Path: e.Path, Link: first}), "enlazar", e)
+					linked, err := handle(tgt.Hardlink(Entry{Path: e.Path, Link: first}), "enlazar", e)
 					if err != nil {
 						return err
 					}
-					if ok {
+					if linked {
 						stats.Hardlinks++
+						return nil
 					}
-					return nil
+				} else {
+					firstPath[e.Inode] = e.Path
 				}
-				firstPath[e.Inode] = e.Path
 			}
 
 			w, err := tgt.Create(e)

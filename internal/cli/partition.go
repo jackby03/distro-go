@@ -7,6 +7,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"distrogo/pkg/blockdev"
 	"distrogo/pkg/efilayout"
@@ -14,6 +15,8 @@ import (
 	"distrogo/pkg/fat32"
 	"distrogo/pkg/gpt"
 	"distrogo/pkg/linuxiso"
+	"distrogo/pkg/rootfs"
+	"distrogo/pkg/squashfs"
 )
 
 // runPartition crea una imagen de disco y le escribe una tabla GPT con dos
@@ -28,6 +31,9 @@ func (a *App) runPartition(args []string) int {
 	force := fs.Bool("force", false, "sobrescribir la imagen si ya existe")
 	formatESP := fs.Bool("format-esp", true, "formatear la particion EFI en FAT32")
 	formatRoot := fs.Bool("format-root", true, "formatear la particion root en ext4")
+	populate := fs.Bool("populate", false, "volcar el rootfs del ISO en la particion root")
+	install := fs.Bool("install", false, "dejar el disco arrancando el sistema instalado (implica --populate)")
+	title := fs.String("title", "", "etiqueta del menu de arranque (por defecto, DistroGo - <imagen>)")
 	bootFrom := fs.String("boot-from", "", "ISO del que copiar el arranque al ESP")
 	withSquashfs := fs.Bool("with-squashfs", false, "copiar tambien el rootfs comprimido al ESP")
 	kernelArgs := fs.String("kernel-args", "", "parametros de arranque del kernel, separados por espacios")
@@ -43,6 +49,9 @@ func (a *App) runPartition(args []string) int {
 		fmt.Fprintln(a.Err, "error: falta --image")
 		return exitUsage
 	}
+	if *install {
+		*populate = true
+	}
 
 	size, err := parseSize(*sizeFlag)
 	if err != nil {
@@ -53,6 +62,11 @@ func (a *App) runPartition(args []string) int {
 	if err != nil {
 		fmt.Fprintf(a.Err, "error: --esp: %v\n", err)
 		return exitUsage
+	}
+
+	if inUse, err := blockdev.InUse(*imagePath); err == nil && inUse {
+		fmt.Fprintf(a.Err, "error: %s esta abierta por otro proceso (QEMU?); cierrala antes de reescribirla\n", *imagePath)
+		return exitError
 	}
 
 	if !*force {
@@ -114,9 +128,14 @@ func (a *App) runPartition(args []string) int {
 	var espInfo *fat32.Info
 	var espContent *efilayout.Result
 	var rootInfo *ext4fs.Info
+	var rootStats *rootfs.Stats
+	var espVol *fat32.FileSystem
+	var rootVol *ext4fs.FS
+
 	if *formatESP {
 		esp := table.Partitions[0]
 		offset := int64(esp.FirstLBA) * int64(layout.SectorSize)
+		a.phase("formateando la ESP (%s)", blockdev.HumanSize(esp.Bytes(layout.SectorSize)))
 		section, secErr := blockdev.NewSection(img, offset, esp.Bytes(layout.SectorSize))
 		if secErr != nil {
 			fmt.Fprintf(a.Err, "error: preparar la ESP: %v\n", secErr)
@@ -129,9 +148,10 @@ func (a *App) runPartition(args []string) int {
 		}
 		info := vol.Info()
 		espInfo = &info
+		espVol = vol
 
 		if *bootFrom != "" {
-			res, err := a.populateESP(vol, *bootFrom, *withSquashfs, *kernelArgs)
+			res, err := a.populateESP(vol, *bootFrom, *withSquashfs, *kernelArgs, *install)
 			if err != nil {
 				fmt.Fprintf(a.Err, "error: %v\n", err)
 				return exitError
@@ -139,23 +159,119 @@ func (a *App) runPartition(args []string) int {
 			espContent = &res
 		}
 
-		// Volcar la FAT y el resumen de espacio libre antes de soltar el volumen.
-		if err := vol.Close(); err != nil {
-			fmt.Fprintf(a.Err, "error: cerrar la ESP: %v\n", err)
-			return exitError
+		// El volumen se cierra al final: una instalacion real todavia tiene que
+		// copiarle el kernel y el initrd.
+		if !*install {
+			if err := vol.Close(); err != nil {
+				fmt.Fprintf(a.Err, "error: cerrar la ESP: %v\n", err)
+				return exitError
+			}
+			espVol = nil
 		}
 	}
 
 	if *formatRoot {
 		root := table.Partitions[1]
 		offset := int64(root.FirstLBA) * int64(layout.SectorSize)
-		vol, err := ext4fs.Format(img, offset, root.Bytes(layout.SectorSize), ext4fs.Options{
-			Label: "distrogo-root",
+		rootSize := root.Bytes(layout.SectorSize)
+
+		// Si se va a volcar el arbol, el numero de inodos sale del squashfs: la
+		// ratio por defecto se queda corta con un rootfs de distro real.
+		var inodes uint32
+		var src *squashfs.FS
+		if *populate {
+			if *bootFrom == "" {
+				fmt.Fprintln(a.Err, "error: --populate necesita --boot-from")
+				return exitUsage
+			}
+			var err error
+			var srcISO *linuxiso.ISO
+			src, srcISO, err = openSquashfs(*bootFrom)
+			if err != nil {
+				fmt.Fprintf(a.Err, "error: %v\n", err)
+				return exitError
+			}
+			// El squashfs lee del ISO: hay que mantenerlo abierto hasta el final.
+			defer func() { _ = srcISO.Close() }()
+			info := src.Info()
+			// Un 10 por ciento de margen para lo que el arbol no cuenta: lost+found,
+			// ficheros generados al primer arranque y demas.
+			inodes = info.Inodes + info.Inodes/10 + 1024
+			fmt.Fprintf(a.Err, "rootfs     : %d inodos en el squashfs, se reservan %d\n", info.Inodes, inodes)
+		}
+
+		vol, err := ext4fs.Format(img, offset, rootSize, ext4fs.Options{
+			Label:      "distrogo-root",
+			InodeCount: inodes,
 		})
 		if err != nil {
 			fmt.Fprintf(a.Err, "error: formatear el root: %v\n", err)
 			return exitError
 		}
+
+		if *populate {
+			a.phase("volcando el rootfs del ISO en la particion root")
+			started := time.Now()
+			expected := int64(src.Info().Inodes)
+
+			stats, err := rootfs.Populate(src, vol.Target(), rootfs.PopulateOptions{
+				TolerateUnsupported: true,
+				Progress: func(st rootfs.Stats, current string) {
+					done := st.Dirs + st.Files + st.Symlinks + st.Devices
+					elapsed := time.Since(started)
+
+					rate := 0.0
+					if elapsed > 0 {
+						rate = float64(done) / elapsed.Seconds()
+					}
+					eta := "-"
+					if rate > 0 && expected > done {
+						eta = time.Duration(float64(expected-done) / rate * float64(time.Second)).Round(time.Second).String()
+					}
+
+					fmt.Fprintf(a.Err, "\r[%s] %d/%d entradas · %.0f/s · quedan %s · %s        ",
+						time.Now().Format("15:04:05"), done, expected, rate, eta, current)
+				},
+			})
+			fmt.Fprintln(a.Err)
+			if err != nil {
+				fmt.Fprintf(a.Err, "error: volcar el rootfs: %v\n", err)
+				return exitError
+			}
+			rootStats = &stats
+			a.phase("rootfs volcado: %d dirs, %d ficheros, %d symlinks, %s en %s",
+				stats.Dirs, stats.Files, stats.Symlinks,
+				blockdev.HumanSize(stats.Bytes), time.Since(started).Round(time.Second))
+		}
+
+		rootVol = vol
+
+		// El UUID del root hace falta para el grub.cfg y el fstab.
+		rootNow, infoErr := vol.Info()
+		if infoErr != nil {
+			fmt.Fprintf(a.Err, "error: leer el root: %v\n", infoErr)
+			return exitError
+		}
+		a.phase("root formateado: ext4, %d inodos, UUID %s", rootNow.InodeCount, rootNow.UUID)
+
+		if *install {
+			if espVol == nil {
+				fmt.Fprintln(a.Err, "error: --install necesita la ESP formateada")
+				return exitError
+			}
+			a.phase("instalando el arranque en el ESP")
+			label := *title
+			if label == "" {
+				label = "DistroGo - " + *imagePath
+			}
+			res, err := a.installTarget(espVol, rootVol, *espInfo, rootNow, label)
+			if err != nil {
+				fmt.Fprintf(a.Err, "error: instalar el arranque: %v\n", err)
+				return exitError
+			}
+			espContent = &res
+		}
+
 		info, err := vol.Info()
 		if err != nil {
 			fmt.Fprintf(a.Err, "error: leer el root: %v\n", err)
@@ -165,15 +281,53 @@ func (a *App) runPartition(args []string) int {
 			fmt.Fprintf(a.Err, "error: cerrar el root: %v\n", err)
 			return exitError
 		}
+		rootVol = nil
 		rootInfo = &info
 	}
 
-	a.writePartitionSummary(*imagePath, size, img.SectorSize(), layout, table, espInfo, espContent, rootInfo)
+	if espVol != nil {
+		if err := espVol.Close(); err != nil {
+			fmt.Fprintf(a.Err, "error: cerrar la ESP: %v\n", err)
+			return exitError
+		}
+	}
+
+	a.writePartitionSummary(*imagePath, size, img.SectorSize(), layout, table, espInfo, espContent, rootInfo, rootStats)
 	return exitOK
 }
 
+// openSquashfs abre el rootfs comprimido de un ISO sin extraerlo.
+//
+// Devuelve tambien el ISO: el lector de squashfs lee del fichero, asi que hay que
+// mantenerlo abierto hasta que se termine de volcar. Cerrarlo aqui fue un fallo
+// que solo aparece al volcar de verdad.
+func openSquashfs(isoPath string) (*squashfs.FS, *linuxiso.ISO, error) {
+	iso, err := linuxiso.Open(isoPath)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	facts, err := iso.Facts()
+	if err != nil {
+		_ = iso.Close()
+		return nil, nil, err
+	}
+	ra, _, err := iso.ReaderAt(facts.Squashfs)
+	if err != nil {
+		_ = iso.Close()
+		return nil, nil, err
+	}
+
+	src, err := squashfs.Open(ra)
+	if err != nil {
+		_ = iso.Close()
+		return nil, nil, err
+	}
+	return src, iso, nil
+}
+
 // populateESP copia al ESP el arranque del ISO y su grub.cfg.
-func (a *App) populateESP(vol *fat32.FileSystem, isoPath string, withSquashfs bool, kernelArgs string) (efilayout.Result, error) {
+func (a *App) populateESP(vol *fat32.FileSystem, isoPath string, withSquashfs bool, kernelArgs string, skipKernel bool) (efilayout.Result, error) {
 	iso, err := linuxiso.Open(isoPath)
 	if err != nil {
 		return efilayout.Result{}, err
@@ -191,9 +345,10 @@ func (a *App) populateESP(vol *fat32.FileSystem, isoPath string, withSquashfs bo
 	}
 
 	res, err := efilayout.Write(iso, vol, efilayout.Spec{
-		Title:        facts.Label,
-		KernelArgs:   args,
-		CopySquashfs: withSquashfs,
+		Title:               facts.Label,
+		KernelArgs:          args,
+		CopySquashfs:        withSquashfs,
+		SkipKernelAndInitrd: skipKernel,
 	})
 	if err != nil {
 		return efilayout.Result{}, err
@@ -201,10 +356,18 @@ func (a *App) populateESP(vol *fat32.FileSystem, isoPath string, withSquashfs bo
 	return res, nil
 }
 
-func (a *App) writePartitionSummary(path string, size int64, sectorSize int, l gpt.Layout, t *gpt.Table, esp *fat32.Info, content *efilayout.Result, root *ext4fs.Info) {
+func (a *App) writePartitionSummary(path string, size int64, sectorSize int, l gpt.Layout, t *gpt.Table, esp *fat32.Info, content *efilayout.Result, root *ext4fs.Info, stats *rootfs.Stats) {
 	if root != nil {
 		fmt.Fprintf(a.Out, "root       : ext4, bloque %d, %d inodos, UUID %s, libre %s\n",
 			root.BlockSize, root.InodeCount, root.UUID, blockdev.HumanSize(root.FreeBytes))
+	}
+	if stats != nil {
+		fmt.Fprintf(a.Out, "volcado    : %d dirs, %d ficheros, %d symlinks, %d hardlinks, %d bytes\n",
+			stats.Dirs, stats.Files, stats.Symlinks, stats.Hardlinks, stats.Bytes)
+		if stats.Unsupported > 0 {
+			fmt.Fprintf(a.Out, "             %d entradas sin soporte en ext4 (device nodes y hardlinks duplicados)\n",
+				stats.Unsupported)
+		}
 	}
 	fmt.Fprintf(a.Out, "imagen     : %s (%s, %d sectores de %d)\n",
 		path, blockdev.HumanSize(size), l.TotalSectors, sectorSize)
@@ -275,4 +438,12 @@ func parseSize(s string) (int64, error) {
 		return 0, fmt.Errorf("tamano invalido %q: debe ser mayor que cero", s)
 	}
 	return v, nil
+}
+
+// phase escribe una marca de progreso con la hora.
+//
+// Sirve para que una instalacion larga no parezca colgada: cada fase deja una
+// linea con la hora a la que empieza o termina.
+func (a *App) phase(format string, args ...any) {
+	fmt.Fprintf(a.Err, "[%s] %s\n", time.Now().Format("15:04:05"), fmt.Sprintf(format, args...))
 }

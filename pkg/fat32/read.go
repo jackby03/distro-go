@@ -225,3 +225,88 @@ func (r *fileReader) Read(p []byte) (int, error) {
 }
 
 func (r *fileReader) Close() error { return nil }
+
+// UUID devuelve el identificador de volumen en la forma corta que usa blkid para
+// FAT: dos grupos de 16 bits en mayusculas.
+func (i Info) UUID() string {
+	return fmt.Sprintf("%04X-%04X", i.VolumeID>>16, i.VolumeID&0xFFFF)
+}
+
+// Remove borra un fichero o un directorio vacio.
+//
+// Marca como borradas todas las ranuras que ocupa, incluidos los nombres largos,
+// y libera su cadena de clusters. Es lo que hace falta para reemplazar un fichero
+// sin dejar restos del contenido anterior.
+func (fs *FileSystem) Remove(path string) error {
+	dir, name := splitPath(path)
+	if name == "" {
+		return fmt.Errorf("borrar %q: es la raiz", path)
+	}
+
+	dirCluster, err := fs.dirCluster(dir)
+	if err != nil {
+		return err
+	}
+	data, err := fs.readDir(dirCluster)
+	if err != nil {
+		return err
+	}
+
+	for _, e := range parseDir(data) {
+		if !strings.EqualFold(e.name, name) {
+			continue
+		}
+		if e.cluster != 0 {
+			if err := fs.freeChain(e.cluster); err != nil {
+				return err
+			}
+		}
+		first := e.slot - e.slots + 1
+		for slot := first; slot <= e.slot; slot++ {
+			data[slot*32] = 0xE5
+		}
+		return fs.writeDir(dirCluster, data)
+	}
+	return fmt.Errorf("%q: %w", path, ErrNotFoundInVolume)
+}
+
+// ReplaceFile escribe un fichero, borrandolo antes si ya existe.
+func (fs *FileSystem) ReplaceFile(path string, r io.Reader) error {
+	if _, err := fs.Stat(path); err == nil {
+		if err := fs.Remove(path); err != nil {
+			return err
+		}
+	}
+	return fs.WriteFile(path, r)
+}
+
+// dirCluster resuelve una ruta de directorio.
+func (fs *FileSystem) dirCluster(dir string) (uint32, error) {
+	cluster := uint32(rootCluster)
+	for _, comp := range strings.Split(dir, "/") {
+		if comp == "" || comp == "." {
+			continue
+		}
+		next, found, err := fs.findDir(cluster, comp)
+		if err != nil {
+			return 0, err
+		}
+		if !found {
+			return 0, fmt.Errorf("%q: %w", comp, ErrNotFoundInVolume)
+		}
+		cluster = next
+	}
+	return cluster, nil
+}
+
+// freeChain devuelve una cadena de clusters a la lista de libres.
+func (fs *FileSystem) freeChain(first uint32) error {
+	chain, err := fs.chainOf(first)
+	if err != nil {
+		return err
+	}
+	for _, c := range chain {
+		putFAT(fs.fat, c, 0)
+	}
+	return nil
+}
