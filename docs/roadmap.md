@@ -25,7 +25,7 @@ No se re-discuten sin abrir un DG-xx que lo justifique.
   modifica. Si algun dia se parchea, las modificaciones hay que publicarlas.
 - Layout: pkg/ son librerias reutilizables, internal/ es orquestacion no exportable.
 - CLI: `distrogo list` y `distrogo install --iso --target-disk --hostname`.
-- Arnes de pruebas: QEMU mas Alpine para e2fsck y fsck.fat. Sin WSL y sin Docker.
+- Arnes de pruebas: QEMU mas Alpine para e2fsck y fsck.fat, lanzado con tools/lab-qemu.ps1. Sin WSL y sin Docker.
 - Fixtures: Mint 22.3 (casper) primario, Debian live secundario, Alpine solo como caso
   de "layout raro" (su rootfs va en el initramfs, no en squashfs).
 - Hardware: Disk 3 (USB, 466 GiB) y solo en M7. Disk 2 tambien es USB y contiene datos.
