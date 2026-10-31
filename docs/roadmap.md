@@ -32,6 +32,20 @@ No se re-discuten sin abrir un DG-xx que lo justifique.
 - Arranque instalado: no depende de casper ni de live-boot, solo necesita kernel,
   initrd y `root=UUID`. Las variantes solo importan para detectar donde estan las
   piezas dentro del ISO.
+- Alcance de disco: una instalacion por disco y disco dedicado. DistroGo no
+  comparte disco con otros sistemas operativos, ni conserva particiones ajenas.
+  No es una prohibicion: es que no hay necesidad para el caso de uso (un disco
+  externo que se dedica entero a la distro) y compartir disco complica el
+  particionado y el arranque. Si algun dia hace falta, se abre un DG-xx.
+- Interfaz: la beta es CLI porque permite probar el motor con precisión. La
+  version estable sera una GUI al estilo Rufus o balenaEtcher. Por eso el nucleo
+  del particionado sera un **perfil declarativo**: los flags de hoy y la GUI de
+  mañana son dos frontends del mismo fichero, y el camino destructivo siempre
+  pasa por un plan revisable.
+- Swap: depende del bus del disco destino. En disco externo (USB, USB-C) no se
+  crea swap: el dispositivo se degrada y el intercambio es lentisimo, asi que el
+  sistema trabaja solo con RAM. En disco interno (SATA, NVMe) si tiene sentido.
+  Hoy no se crea swap en ningun caso; implementarlo es de M9.
 - Politica de disco: solo bloquea el disco del sistema (IsSystem/IsBoot o que aloje
   C:), el dispositivo de solo lectura y el disco sin serial o sin tamano. Tener
   volumenes montados o particiones no bloquea: se avisa de lo que se pierde. La
@@ -140,6 +154,33 @@ No se re-discuten sin abrir un DG-xx que lo justifique.
     limpio y el mismo numero de entradas que hoy.
   - Medido en M6: 507.615 entradas en 2.707 s, 187 entradas/s (DG-28).
 
+- [ ] M9 — Perfil declarativo de particiones (futuro)
+  - Entrega: describir el layout en un fichero (disco por serial, tabla, lista de
+    particiones con rol, tamano relativo o absoluto, formato y punto de montaje),
+    con `plan` que resuelve los numeros sin escribir y `apply` que ejecuta.
+  - Incluye: validar que el rootfs cabe antes de tocar nada, alineacion a 1 MiB, y
+    swap segun el bus del disco destino.
+  - Ficheros: pkg/gpt, un pkg/partitionplan nuevo, y la CLI.
+  - Respuestas: ~6.
+  - Criterio de salida: dos perfiles (externo sin swap, interno con swap) instalan
+    la misma ISO con `apply --plan`, y un plan que no cabe se rechaza sin escribir.
+
+- [ ] M10 — GUI sobre el perfil (futuro)
+  - Entrega: interfaz grafica al estilo Rufus o balenaEtcher que genera el perfil
+    de M9 y lo entrega al mismo motor. No es un TUI ni una CLI interactiva.
+  - Respuestas: n/a hasta que M9 cierre.
+  - Criterio de salida: instalar desde la GUI produce un perfil byte a byte igual
+    al que se escribiria a mano con los mismos datos.
+
+- [ ] M11 — Discos de 4K logicos (futuro, lejano)
+  - Entrega: soportar sectores logicos de 4096 bytes ademas de 512.
+  - Motivo: `ext4fs.Open` rechaza hoy cualquier sector que no sea de 512, y el
+    resto de conversiones LBA-a-bytes asumen lo mismo. Los discos externos de
+    4Kn no funcionarian.
+  - Fuera de alcance de la beta: el laboratorio usa un HDD USB con sectores de
+    512, y las memorias USB tampoco estan en el alcance.
+  - Respuestas: ~4.
+
 ## Cadena de dependencias
 
 ```
@@ -149,6 +190,8 @@ M3 (linuxiso v1 + fat32 + efilayout) -> habilita M6
 M4 (squashfs) + M5 (ext4fs)          -> habilitan M6
 M6 (arranque instalado)              -> habilita M6.5 y M7
 M6 (instalacion completa)            -> permite medir M8
+M9 (perfil de particiones)           -> habilita M10
+M11 (sectores de 4K)                 -> condiciona los discos que se pueden usar
 ```
 
 M1 y M2 son independientes entre si y se pueden paralelizar si hay prisa.
