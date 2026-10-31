@@ -1,72 +1,81 @@
-# Hallazgos del spike H-1 (jul 2026)
+# Hallazgos del spike H-1
 
-El spike se ha retirado del árbol. Este documento es lo único que sobrevive de él,
-junto con la salida de `e2fsck` que validó el resultado.
+El spike se retiro del arbol. Este documento es lo unico que sobrevive de el, junto con
+la salida de e2fsck que valido el resultado.
 
-## Decisión que tomó el spike
+## Decision que tomo el spike
 
-**GO**: `go-diskfs` (v1.9.4) produce ext4 estructuralmente válido desde Windows.
+GO: go-diskfs (v1.9.4) produce ext4 estructuralmente valido desde Windows.
 
-```
-e2fsck 1.47.4 · 5 pasadas sin errores (Alpine 3.24 en QEMU, imagen de 8 GiB)
-distrogo-root: 19986/40448 files (0.2% non-contiguous), 431528/2097152 blocks
-12 binarios setuid presentes (sudo, su, passwd, mount, pkexec...)
-du -sh = 1,6 GiB · label y UUID legibles
-```
+- e2fsck 1.47.4, cinco pasadas sin errores, en Alpine 3.24 dentro de QEMU.
+- Imagen de 8 GiB con raiz `distrogo-root`.
+- Resultado: 19986/40448 ficheros, 0,2 por ciento no contiguos, 431528/2097152 bloques.
+- 12 binarios setuid presentes: sudo, su, passwd, mount, pkexec, chfn, chsh, gpasswd,
+  newgrp, umount, fusermount3 y dbus-daemon-launch-helper.
+- du -sh: 1,6 GiB. Label y UUID legibles.
+- Modo y permisos correctos en la muestra revisada.
 
-Consecuencia: H4 deja de ser "escribir un writer ext4" (~3 semanas) y pasa a ser
-"adaptar go-diskfs + 2 parches" (~1 semana).
+Consecuencia: H4 (M5 en el roadmap) deja de ser "escribir un writer ext4" y pasa a ser
+"adaptar go-diskfs y parchear dos huecos".
 
-## Números de referencia (Mint 22.3 Xfce, xz, bloque 128 KiB)
+## Numeros de referencia del rootfs de Mint 22.3 Xfce
 
-| Métrica | Valor |
-|---|---|
-| Entradas del rootfs | 507.623 (322.477 ficheros, **162.239 symlinks**, 22.899 dirs, 8 device) |
-| Contenido | 6,58 GiB; mayor fichero `usr/lib/thunderbird/libxul.so` (165 MiB) |
-| uid / gid distintos | 18 / 29 · setuid / setgid: 18 / 18 |
-| Hardlinks | 17 inodos (38 entradas) |
-| xattrs | 0 (el ISO no los lleva: `flags=0x00C0`, sin bit 0x200) |
-| Walk de metadatos | 103 s (≈200 µs/entrada) |
-| Instalación completa estimada | **10-15 min** (24 MiB/s, cuello = xz single-thread) |
+Compresion xz, bloque de 128 KiB, squashfs version 4.0.
 
-## Bugs de `github.com/CalebQ42/squashfs` v1.4.1 (MPL-2.0)
+- Entradas totales: 507.623.
+- Ficheros regulares: 322.477.
+- Symlinks: 162.239.
+- Directorios: 22.899.
+- Device nodes: 8.
+- Contenido: 6,58 GiB. Mayor fichero: usr/lib/thunderbird/libxul.so, 165 MiB.
+- uid distintos: 18. gid distintos: 29.
+- setuid: 18. setgid: 18.
+- Hardlinks: 17 inodos que suman 38 entradas.
+- xattrs: ninguno. El ISO no los lleva (flags 0x00C0, sin el bit 0x200).
+- Walk de metadatos: 103 s, unos 200 microsegundos por entrada.
+- Instalacion completa estimada: 10 a 15 minutos, a 24 MiB/s. El cuello es la
+  descompresion xz en un solo hilo.
 
-### 1. Deadlock y pérdida de datos en `FullReader.WriteTo`
-`low/data/fullreader.go` borra el bloque equivocado tras escribir:
+## Bugs de CalebQ42/squashfs v1.4.1 (MPL-2.0)
 
-```go
-i++
-delete(results, i)   // borra results[i+1], no el bloque recién escrito
-```
+### 1. Deadlock y perdida de datos en FullReader.WriteTo
 
-Con resultados fuera de orden (siempre, con `runtime.NumCPU()` workers) el
-consumidor espera un bloque que ya se descartó → `all goroutines are asleep - deadlock!`.
-Síntoma observado: el proceso muere a los ~5 ficheros de una ISO real.
-**Solución**: no usar `WriteTo`; leer con `File.Read` (secuencial, correcto) o
-reimplementar el pipeline en paralelo sobre `FullReader.Block(i)`.
-Coste: se pierde la descompresión multihilo de la librería.
+En low/data/fullreader.go, tras escribir un bloque hace `i++` y despues
+`delete(results, i)`, con lo que borra el bloque siguiente en lugar del recien escrito.
+Con resultados fuera de orden (siempre, porque usa runtime.NumCPU() workers) el
+consumidor se queda esperando un bloque que ya nadie va a enviar. El proceso muere con
+"all goroutines are asleep - deadlock". Se reprodujo a los pocos ficheros de un ISO real.
+
+Solucion adoptada: no usar WriteTo. Leer con File.Read, que es secuencial y correcto, o
+reimplementar el paralelismo sobre FullReader.Block(i). Coste: se pierde la descompresion
+multihilo de la libreria.
 
 ### 2. Rutas anidadas rotas en Windows
-`fs.go` usa `filepath.Clean`, que en Windows convierte `/` en `\`; después hace
-`strings.Split(name, "/")` → cualquier ruta con más de un componente devuelve
-`fs.ErrNotExist`.
-**Solución**: navegar componente a componente (`FS.OpenFile("usr")` → `File.FS()` →
-`OpenFile("bin")`) en un adapter. Es lo que debe hacer `pkg/linuxiso`.
+
+El paquete usa filepath.Clean en fs.go, que en Windows convierte "/" en "\". Despues
+hace strings.Split(name, "/"), asi que cualquier ruta con mas de un componente devuelve
+fs.ErrNotExist.
+
+Solucion adoptada: navegar componente a componente (OpenFile("usr"), luego File.FS(),
+luego OpenFile("bin")). Es lo que debe hacer pkg/linuxiso.
 
 ### 3. Ficheros de 0 bytes ilegibles
-`data.NewReader` hace `Block(0)`; con `BlockNum() == 0` devuelve
-`invalid block index`. Afectaba a 39 ficheros del rootfs.
-**Solución**: si `Size == 0`, crear el fichero vacío y no leer nada.
 
-## Huecos de `go-diskfs` ext4 (v1.9.4)
+data.NewReader llama a Block(0), y con BlockNum() igual a 0 devuelve "invalid block
+index". Afectaba a 39 ficheros del rootfs.
 
-- `Mknod` → `filesystem.ErrNotImplemented`. Afecta a 8 device nodes del rootfs.
-  Irrelevante en la práctica: `/dev` es tmpfs y systemd lo crea al arrancar.
-- `Link` (hardlinks) → `filesystem.ErrNotImplemented`. Afecta a 21 entradas;
-  duplicar el contenido es válido para ext4 y e2fsck no se queja.
-- Ambos son parcheables (~60 líneas) si algún día molestan.
+Solucion adoptada: si Size es 0, crear el fichero vacio y no leer nada.
 
-## Reutilizado por los hitos siguientes
+## Huecos de go-diskfs ext4 (v1.9.4)
 
-- `pkg/rootfs` (contrato `Source`/`Target`) salió de aquí y es código de producto.
-- El adapter squashfs → `rootfs.Source` se reescribirá limpio en `pkg/linuxiso` (H3).
+- Mknod devuelve ErrNotImplemented. Afecta a 8 device nodes. Irrelevante en la practica
+  porque /dev es tmpfs y systemd lo crea al arrancar.
+- Link (hardlinks) devuelve ErrNotImplemented. Afecta a 21 entradas. Duplicar el
+  contenido es valido para ext4 y e2fsck no se queja.
+- Los dos son parcheables, en torno a 60 lineas, si algun dia molestan. La licencia es
+  Apache-2.0, sin ataduras.
+
+## Lo que reutilizan los milestones siguientes
+
+- pkg/rootfs (contrato Source y Target) salio de aqui y es codigo de producto.
+- El adaptador de squashfs a rootfs.Source se reescribira limpio en pkg/linuxiso (M4).
