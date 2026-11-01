@@ -129,143 +129,36 @@ func (d *Disk) LockedVolumes() []string {
 func (d *Disk) Size() int64     { return d.size }
 func (d *Disk) SectorSize() int { return d.sector }
 
-// ReadAt lee del disco en el byte off.
-//
-// Windows exige que los accesos a un disco crudo esten alineados al sector, tanto
-// el offset como el tamano. Cuando no lo estan se lee el sector completo que
-// contiene el dato y se recorta, en lugar de fallar: go-diskfs trabaja con
-// bloques de 4096 pero tambien escribe cosas sueltas, como la semilla de checksums.
-func (d *Disk) ReadAt(p []byte, off int64) (int, error) {
-	if d.handle == windows.InvalidHandle {
-		return 0, errors.New("el disco esta cerrado")
-	}
-	if off < 0 || off+int64(len(p)) > d.size {
-		return 0, blockdev.ErrOutOfRange
-	}
-
-	if d.alineado(off, len(p)) {
-		return d.leerCrudo(p, off)
-	}
-
-	desde := off - off%int64(d.sector)
-	hasta := d.redondear(off + int64(len(p)))
-	buf := make([]byte, hasta-desde)
-	if _, err := d.leerCrudo(buf, desde); err != nil {
-		return 0, err
-	}
-	copiados := copy(p, buf[off-desde:])
-	return copiados, nil
-}
-
-// WriteAt escribe en el disco en el byte off.
-//
-// Esto es lo que se lleva por delante lo que hubiera. No hay confirmacion posible
-// con un bloque de 512 bytes: la decision de llamar aqui la toma la capa de
-// arriba, con el serial del disco ya verificado.
-//
-// Igual que en la lectura, un acceso no alineado se convierte en leer los sectores
-// afectados, cambiar la parte pedida y escribirlos enteros. Sin esto, el formateo
-// del ext4 falla con ERROR_INVALID_PARAMETER al escribir el GDT.
-func (d *Disk) WriteAt(p []byte, off int64) (int, error) {
-	if d.handle == windows.InvalidHandle {
-		return 0, errors.New("el disco esta cerrado")
-	}
-	if off < 0 || off+int64(len(p)) > d.size {
-		return 0, blockdev.ErrOutOfRange
-	}
-
-	if d.alineado(off, len(p)) {
-		return d.escribirCrudo(p, off)
-	}
-
-	desde := off - off%int64(d.sector)
-	hasta := d.redondear(off + int64(len(p)))
-	buf := make([]byte, hasta-desde)
-	if _, err := d.leerCrudo(buf, desde); err != nil {
-		return 0, err
-	}
-	copy(buf[off-desde:], p)
-	if _, err := d.escribirCrudo(buf, desde); err != nil {
-		return 0, err
-	}
-	return len(p), nil
-}
-
-// alineado dice si el acceso cumple la alineacion que exige Windows.
-func (d *Disk) alineado(off int64, n int) bool {
-	s := int64(d.sector)
-	return s > 0 && off%s == 0 && int64(n)%s == 0
-}
-
-// redondear sube al siguiente multiplo de sector, sin pasarse del disco.
-func (d *Disk) redondear(off int64) int64 {
-	s := int64(d.sector)
-	if s <= 0 {
-		return off
-	}
-	r := ((off + s - 1) / s) * s
-	if r > d.size {
-		return d.size
-	}
-	return r
-}
-
-// leerCrudo lee sin comprobar alineacion.
-func (d *Disk) leerCrudo(p []byte, off int64) (int, error) {
-	var done uint32
-	ov := &windows.Overlapped{Offset: uint32(off), OffsetHigh: uint32(uint64(off) >> 32)}
-	if err := windows.ReadFile(d.handle, p, &done, ov); err != nil && !errors.Is(err, windows.ERROR_HANDLE_EOF) {
-		return int(done), fmt.Errorf("leer %d bytes en %d: %w", len(p), off, err)
-	}
-	return int(done), nil
-}
-
-// escribirCrudo escribe sin comprobar alineacion.
-func (d *Disk) escribirCrudo(p []byte, off int64) (int, error) {
-	var done uint32
-	ov := &windows.Overlapped{Offset: uint32(off), OffsetHigh: uint32(uint64(off) >> 32)}
-	if err := windows.WriteFile(d.handle, p, &done, ov); err != nil {
-		return int(done), fmt.Errorf("escribir %d bytes en %d: %w", len(p), off, err)
-	}
-	return int(done), nil
-}
-
-// Sync fuerza el volcado a disco. Sin esto, un "listo" puede ser mentira: los
-// datos estarian en la cache de Windows y el usuario desconectaria el disco.
-func (d *Disk) Sync() error {
-	if d.handle == windows.InvalidHandle {
-		return nil
-	}
-	if err := windows.FlushFileBuffers(d.handle); err != nil {
-		return fmt.Errorf("volcar la cache del disco %d: %w", d.number, err)
-	}
-	return nil
-}
-
 // Close cierra las manejadoras: primero el disco y despues los volumenes, cuyo
 // cierre es lo que libera el bloqueo.
 func (d *Disk) Close() error {
 	var primero error
 
-	if d.handle != windows.InvalidHandle {
-		if err := windows.CloseHandle(d.handle); err != nil {
-			primero = fmt.Errorf("cerrar el disco %d: %w", d.number, err)
+	// Los que se sacaron de linea vuelven a estarlo antes de soltar el handle:
+	// cerrado el handle, el IOCTL ya no llega a ninguna parte. Y el error no se
+	// descarta, porque un volumen que se queda fuera de linea desaparece del
+	// Explorador hasta que se reconecta el disco.
+	for _, h := range d.offline {
+		if err := ioctlSimple(h, ioctlVolumeOnline); err != nil && primero == nil {
+			primero = fmt.Errorf("devolver a linea el volumen: %w", err)
 		}
-		d.handle = windows.InvalidHandle
 	}
+	d.offline = nil
+	d.offlinePaths = nil
 
 	for _, h := range d.volumes {
 		if err := windows.CloseHandle(h); err != nil && primero == nil {
 			primero = fmt.Errorf("cerrar el volumen: %w", err)
 		}
 	}
-	// Los que se sacaron de linea vuelven a estarlo antes de soltar el handle, o
-	// la unidad se quedaria sin letra hasta reiniciar.
-	for _, h := range d.offline {
-		_ = ioctlSimple(h, ioctlVolumeOnline)
-	}
-	d.offline = nil
 	d.volumes = nil
+
+	if d.handle != windows.InvalidHandle {
+		if err := windows.CloseHandle(d.handle); err != nil && primero == nil {
+			primero = fmt.Errorf("cerrar el disco %d: %w", d.number, err)
+		}
+		d.handle = windows.InvalidHandle
+	}
 
 	return primero
 }
@@ -356,76 +249,6 @@ func lockAndDismount(path string) (windows.Handle, bool, error) {
 		"el volumen %q no se pudo tomar (%s)", path, strings.Join(detalle, "; "))
 }
 
-// VolumeProbe es el resultado de probar los IOCTL de un volumen, uno por uno.
-//
-// Existe porque un antivirus puede vetar uno solo: sin esta tabla es imposible
-// saber si el problema son los permisos, el desmontaje o el bloqueo exclusivo, y
-// cada uno se resuelve de forma distinta.
-type VolumeProbe struct {
-	Path     string
-	Open     error
-	Dismount error
-	Lock     error
-	Offline  error
-	Restore  error
-}
-
-// ProbeDisk prueba los IOCTL necesarios para tomar un disco en exclusiva y
-// devuelve el error de cada uno. No escribe datos y deja el volumen como estaba:
-// si lo saca de linea, lo vuelve a poner en linea.
-func ProbeDisk(number int) ([]VolumeProbe, error) {
-	paths, err := volumesOnDisk(number)
-	if err != nil {
-		return nil, err
-	}
-
-	probes := make([]VolumeProbe, 0, len(paths))
-	for _, path := range paths {
-		p := VolumeProbe{Path: path}
-
-		h, err := openVolumeForControl(path)
-		if err != nil {
-			p.Open = err
-			probes = append(probes, p)
-			continue
-		}
-
-		p.Dismount = reintentar(func() error { return ioctlSimple(h, fsctlDismountVolume) })
-		p.Lock = reintentar(func() error { return ioctlSimple(h, fsctlLockVolume) })
-		// Fuera de linea solo tiene sentido si el bloqueo fallo: con el volumen ya
-		// bloqueado, el IOCTL responde "incorrect function" y solo confunde.
-		if p.Lock != nil {
-			p.Offline = reintentar(func() error { return ioctlSimple(h, ioctlVolumeOffline) })
-			if p.Offline == nil {
-				p.Restore = ioctlSimple(h, ioctlVolumeOnline)
-			}
-		}
-
-		_ = windows.CloseHandle(h)
-		probes = append(probes, p)
-	}
-
-	return probes, nil
-}
-
-// openVolumeForControl abre un volumen para mandarle IOCTL de control.
-func openVolumeForControl(path string) (windows.Handle, error) {
-	p, err := windows.UTF16PtrFromString(path)
-	if err != nil {
-		return windows.InvalidHandle, fmt.Errorf("convertir %q: %w", path, err)
-	}
-
-	h, err := windows.CreateFile(p, windows.GENERIC_READ|windows.GENERIC_WRITE,
-		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE, nil, windows.OPEN_EXISTING, 0, 0)
-	if err != nil {
-		if errors.Is(err, windows.ERROR_ACCESS_DENIED) {
-			return windows.InvalidHandle, fmt.Errorf("abrir el volumen %q: hace falta una consola elevada (ejecutar como administrador): %w", path, err)
-		}
-		return windows.InvalidHandle, fmt.Errorf("abrir el volumen %q: %w", path, err)
-	}
-	return h, nil
-}
-
 // openDiskExclusive abre el disco fisico sin compartir con nadie.
 func openDiskExclusive(path string) (windows.Handle, error) {
 	p, err := windows.UTF16PtrFromString(path)
@@ -446,6 +269,9 @@ func openDiskExclusive(path string) (windows.Handle, error) {
 	if err != nil {
 		if errors.Is(err, windows.ERROR_ACCESS_DENIED) {
 			return windows.InvalidHandle, fmt.Errorf("abrir %q: hace falta una consola elevada (ejecutar como administrador): %w", path, err)
+		}
+		if errors.Is(err, windows.ERROR_SHARING_VIOLATION) {
+			return windows.InvalidHandle, fmt.Errorf("abrir %q en exclusiva: algun volumen sigue en uso (uno sin letra de unidad, o un programa con el disco abierto): %w", path, err)
 		}
 		return windows.InvalidHandle, fmt.Errorf("abrir %q en exclusiva: %w", path, err)
 	}

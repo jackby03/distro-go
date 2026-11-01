@@ -219,8 +219,17 @@ func (a *App) applyToDisk(disk *windisk.Disk, opts partitionOptions) int {
 		return exitError
 	}
 
-	a.writePartitionSummary(windisk.DiskPath(disk.Number()), disk.Size(), disk.SectorSize(),
-		layout, res.table, res.espInfo, res.espContent, res.rootInfo, res.rootStats)
+	a.writePartitionSummary(summaryData{
+		target:     windisk.DiskPath(disk.Number()),
+		size:       disk.Size(),
+		sectorSize: disk.SectorSize(),
+		layout:     layout,
+		table:      res.table,
+		esp:        res.espInfo,
+		content:    res.espContent,
+		root:       res.rootInfo,
+		stats:      res.rootStats,
+	})
 	if res.accountInfo != nil {
 		fmt.Fprintf(a.Out, "cuenta     : %s (uid %d), home %s, grupo %s, %d ficheros de skel, %d entradas del home a su nombre\n",
 			res.accountInfo.User, res.accountInfo.UID, res.accountInfo.Home,
@@ -256,37 +265,4 @@ func (a *App) writeDiskPlan(d blockdev.Disk, espSize int64) {
 		}
 		fmt.Fprintf(a.Out, "  %d  %s  %s\n", p.Number, blockdev.HumanSize(p.SizeBytes), detalle)
 	}
-}
-
-// findDisk busca un disco por su numero.
-func findDisk(disks []blockdev.Disk, number uint32) (blockdev.Disk, bool) {
-	for _, d := range disks {
-		if d.Number == number {
-			return d, true
-		}
-	}
-	return blockdev.Disk{}, false
-}
-
-// diskNumbers lista los discos disponibles para el mensaje de error.
-func diskNumbers(disks []blockdev.Disk) string {
-	if len(disks) == 0 {
-		return "ninguno"
-	}
-	out := ""
-	for i, d := range disks {
-		if i > 0 {
-			out += ", "
-		}
-		out += fmt.Sprintf("%d", d.Number)
-	}
-	return out
-}
-
-// estadoIOCTL traduce el resultado de un IOCTL a algo legible.
-func estadoIOCTL(err error) string {
-	if err == nil {
-		return "ok"
-	}
-	return "FALLO: " + err.Error()
 }

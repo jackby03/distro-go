@@ -6,6 +6,8 @@ import (
 	"errors"
 	"testing"
 
+	"golang.org/x/sys/windows"
+
 	"distrogo/pkg/blockdev"
 )
 
@@ -93,5 +95,22 @@ func TestDiscoCerradoNoDejaLeerNiEscribir(t *testing.T) {
 	}
 	if _, err := d.WriteAt(make([]byte, 512), 0); err == nil {
 		t.Fatal("un disco sin abrir no puede escribirse")
+	}
+}
+
+func TestCloseNoSeTragaElErrorAlDevolverALinea(t *testing.T) {
+	// Antes se cerraban los handles y despues se intentaba devolver el volumen a
+	// linea, con lo que el IOCTL fallaba siempre y el error se descartaba. El
+	// sintoma era una unidad que desaparecia del Explorador.
+	d := discoDePrueba(1024, 512)
+	d.handle = windows.InvalidHandle
+	d.volumes = []windows.Handle{windows.InvalidHandle}
+	d.offline = []windows.Handle{windows.InvalidHandle}
+
+	if err := d.Close(); err == nil {
+		t.Fatal("un volumen que no vuelve a linea tiene que devolver error")
+	}
+	if len(d.volumes) != 0 || len(d.offline) != 0 {
+		t.Fatal("Close tiene que dejar las listas vacias")
 	}
 }

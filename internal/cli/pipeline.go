@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"strconv"
 	"time"
 
 	"distrogo/pkg/blockdev"
@@ -242,18 +243,11 @@ func (a *App) applyPartition(dev blockdev.Writable, layout gpt.Layout, opts part
 func (a *App) progressFunc(started time.Time, expected int64) func(rootfs.Stats, string) {
 	return func(st rootfs.Stats, current string) {
 		done := st.Dirs + st.Files + st.Symlinks + st.Devices
-		elapsed := time.Since(started)
+		rate := float64(done) / time.Since(started).Seconds()
 
-		rate := 0.0
-		if elapsed > 0 {
-			rate = float64(done) / elapsed.Seconds()
-		}
-		eta := "-"
-		if rate > 0 && expected > done {
-			eta = time.Duration(float64(expected-done) / rate * float64(time.Second)).Round(time.Second).String()
-		}
-
-		fmt.Fprintf(a.Err, "\r[%s] %d/%d entradas · %.0f/s · quedan %s · %s        ",
-			time.Now().Format("15:04:05"), done, expected, rate, eta, current)
+		fmt.Fprint(a.Err, progressLine(
+			strconv.FormatInt(done, 10), strconv.FormatInt(expected, 10)+" entradas",
+			fmt.Sprintf("%.0f/s", rate),
+			etaText(rate, float64(expected-done)), current))
 	}
 }

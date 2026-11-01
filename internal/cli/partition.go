@@ -120,8 +120,17 @@ func (a *App) runPartition(args []string) int {
 		return exitError
 	}
 
-	a.writePartitionSummary(*imagePath, size, img.SectorSize(), layout, res.table,
-		res.espInfo, res.espContent, res.rootInfo, res.rootStats)
+	a.writePartitionSummary(summaryData{
+		target:     *imagePath,
+		size:       size,
+		sectorSize: img.SectorSize(),
+		layout:     layout,
+		table:      res.table,
+		esp:        res.espInfo,
+		content:    res.espContent,
+		root:       res.rootInfo,
+		stats:      res.rootStats,
+	})
 
 	if res.accountInfo != nil {
 		fmt.Fprintf(a.Out, "cuenta     : %s (uid %d), home %s, grupo %s, %d ficheros de skel, %d entradas del home a su nombre\n",
@@ -191,36 +200,54 @@ func (a *App) populateESP(vol *fat32.FileSystem, isoPath string, withSquashfs bo
 	return res, nil
 }
 
-func (a *App) writePartitionSummary(path string, size int64, sectorSize int, l gpt.Layout, t *gpt.Table, esp *fat32.Info, content *efilayout.Result, root *ext4fs.Info, stats *rootfs.Stats) {
-	if root != nil {
+// summaryData reune todo lo que pinta el resumen final de una instalacion.
+//
+// En su dia fue una lista de nueve parametros posicionales. Un struct deja claro
+// que es cada cosa en las dos llamadas que hay (imagen y disco fisico) y evita
+// que manana alguien pase el ESP donde va el root.
+type summaryData struct {
+	// target es lo que se ensena en la linea "imagen" o "disco".
+	target     string
+	size       int64
+	sectorSize int
+	layout     gpt.Layout
+	table      *gpt.Table
+	esp        *fat32.Info
+	content    *efilayout.Result
+	root       *ext4fs.Info
+	stats      *rootfs.Stats
+}
+
+func (a *App) writePartitionSummary(d summaryData) {
+	if d.root != nil {
 		fmt.Fprintf(a.Out, "root       : ext4, bloque %d, %d inodos, UUID %s, libre %s\n",
-			root.BlockSize, root.InodeCount, root.UUID, blockdev.HumanSize(root.FreeBytes))
+			d.root.BlockSize, d.root.InodeCount, d.root.UUID, blockdev.HumanSize(d.root.FreeBytes))
 	}
-	if stats != nil {
+	if d.stats != nil {
 		fmt.Fprintf(a.Out, "volcado    : %d dirs, %d ficheros, %d symlinks, %d hardlinks, %d bytes\n",
-			stats.Dirs, stats.Files, stats.Symlinks, stats.Hardlinks, stats.Bytes)
-		if stats.Unsupported > 0 {
+			d.stats.Dirs, d.stats.Files, d.stats.Symlinks, d.stats.Hardlinks, d.stats.Bytes)
+		if d.stats.Unsupported > 0 {
 			fmt.Fprintf(a.Out, "             %d entradas sin soporte en ext4 (device nodes y hardlinks duplicados)\n",
-				stats.Unsupported)
+				d.stats.Unsupported)
 		}
 	}
 	fmt.Fprintf(a.Out, "imagen     : %s (%s, %d sectores de %d)\n",
-		path, blockdev.HumanSize(size), l.TotalSectors, sectorSize)
-	fmt.Fprintf(a.Out, "disco GUID : %s\n", t.DiskGUID)
-	fmt.Fprintf(a.Out, "area util  : LBA %d..%d\n", l.FirstUsable, l.LastUsable)
-	fmt.Fprintf(a.Out, "particiones: %d\n", len(t.Partitions))
-	for i, p := range t.Partitions {
+		d.target, blockdev.HumanSize(d.size), d.layout.TotalSectors, d.sectorSize)
+	fmt.Fprintf(a.Out, "disco GUID : %s\n", d.table.DiskGUID)
+	fmt.Fprintf(a.Out, "area util  : LBA %d..%d\n", d.layout.FirstUsable, d.layout.LastUsable)
+	fmt.Fprintf(a.Out, "particiones: %d\n", len(d.table.Partitions))
+	for i, p := range d.table.Partitions {
 		fmt.Fprintf(a.Out, "  %d  %-4s %10s  LBA %d..%d  %s  %s\n",
-			i+1, p.Name, blockdev.HumanSize(p.Bytes(sectorSize)),
+			i+1, p.Name, blockdev.HumanSize(p.Bytes(d.sectorSize)),
 			p.FirstLBA, p.LastLBA, p.Type, p.Unique)
 	}
-	if esp != nil {
+	if d.esp != nil {
 		fmt.Fprintf(a.Out, "ESP        : FAT32, cluster de %d bytes, %d clusters, etiqueta %s\n",
-			esp.ClusterSize, esp.Clusters, esp.Label)
+			d.esp.ClusterSize, d.esp.Clusters, d.esp.Label)
 	}
-	if content != nil {
+	if d.content != nil {
 		fmt.Fprintf(a.Out, "arranque   : %d ficheros, %s copiados al ESP\n",
-			content.Files, blockdev.HumanSize(content.Bytes))
+			d.content.Files, blockdev.HumanSize(d.content.Bytes))
 	}
 	fmt.Fprintln(a.Out, "verificado  : firma, CRC de cabecera y CRC de entradas correctos")
 }

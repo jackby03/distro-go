@@ -65,6 +65,14 @@ func (a *App) runFlash(args []string) int {
 		return exitError
 	}
 
+	// Antes de destruir nada: la imagen tiene que ser un disco con GPT y sus
+	// particiones. Un .img a medio escribir se rechaza aqui, no despues de haber
+	// borrado el disco.
+	if err := a.validateImage(*imagePath); err != nil {
+		fmt.Fprintf(a.Err, "error: %v\n", err)
+		return exitError
+	}
+
 	if a.Enumerate == nil {
 		fmt.Fprintln(a.Err, "error: falta el enumerador de discos")
 		return exitError
@@ -163,8 +171,12 @@ func (a *App) runFlash(args []string) int {
 	return exitOK
 }
 
-// copyToDisk vuelca la imagen en el disco en bloques grandes y en orden.
-func (a *App) copyToDisk(imagePath string, disk *windisk.Disk, size int64) (int64, error) {
+// copyToDisk vuelca la imagen en el dispositivo en bloques grandes y en orden.
+//
+// Recibe blockdev.Writable y no el disco de windisk para poder probarlo con un
+// dispositivo en memoria: el bucle de copia es el corazon de flash y no deberia
+// necesitar un USB conectado para ejercitarse.
+func (a *App) copyToDisk(imagePath string, dev blockdev.Writable, size int64) (int64, error) {
 	src, err := os.Open(imagePath)
 	if err != nil {
 		return 0, fmt.Errorf("abrir la imagen: %w", err)
@@ -178,21 +190,16 @@ func (a *App) copyToDisk(imagePath string, disk *windisk.Disk, size int64) (int6
 	for {
 		n, rerr := src.Read(buf)
 		if n > 0 {
-			if _, werr := disk.WriteAt(buf[:n], escritos); werr != nil {
+			if _, werr := dev.WriteAt(buf[:n], escritos); werr != nil {
 				return escritos, fmt.Errorf("escribir en el disco en %d: %w", escritos, werr)
 			}
 			escritos += int64(n)
 
-			elapsed := time.Since(started)
-			rate := float64(escritos) / elapsed.Seconds()
-			eta := "-"
-			if rate > 0 && size > escritos {
-				eta = time.Duration(float64(size-escritos) / rate * float64(time.Second)).Round(time.Second).String()
-			}
-			fmt.Fprintf(a.Err, "\r[%s] %s / %s · %.0f MB/s · quedan %s        ",
-				time.Now().Format("15:04:05"),
+			rate := float64(escritos) / time.Since(started).Seconds()
+			fmt.Fprint(a.Err, progressLine(
 				blockdev.HumanSize(escritos), blockdev.HumanSize(size),
-				rate/(1<<20), eta)
+				fmt.Sprintf("%.0f MB/s", rate/(1<<20)),
+				etaText(rate, float64(size-escritos)), ""))
 		}
 		if errors.Is(rerr, io.EOF) {
 			break
@@ -212,8 +219,8 @@ func (a *App) copyToDisk(imagePath string, disk *windisk.Disk, size int64) (int6
 	return escritos, nil
 }
 
-// verifyDisk relee el disco y lo compara con la imagen, byte a byte.
-func (a *App) verifyDisk(imagePath string, disk *windisk.Disk, size int64) error {
+// verifyDisk relee el dispositivo y lo compara con la imagen, byte a byte.
+func (a *App) verifyDisk(imagePath string, dev blockdev.Writable, size int64) error {
 	src, err := os.Open(imagePath)
 	if err != nil {
 		return fmt.Errorf("abrir la imagen: %w", err)
@@ -228,19 +235,20 @@ func (a *App) verifyDisk(imagePath string, disk *windisk.Disk, size int64) error
 	for {
 		n, rerr := src.Read(esperado)
 		if n > 0 {
-			if _, werr := disk.ReadAt(leido[:n], comparados); werr != nil {
+			if _, werr := dev.ReadAt(leido[:n], comparados); werr != nil {
 				return fmt.Errorf("leer el disco en %d: %w", comparados, werr)
 			}
 			if !bytes.Equal(esperado[:n], leido[:n]) {
-				return fmt.Errorf("el disco y la imagen difieren en el byte %d", comparados+int64(primeraDiferencia(esperado[:n], leido[:n])))
+				diferencia := comparados + int64(primeraDiferencia(esperado[:n], leido[:n]))
+				return fmt.Errorf("el disco y la imagen difieren en el byte %d", diferencia)
 			}
 			comparados += int64(n)
 
-			elapsed := time.Since(started)
-			rate := float64(comparados) / elapsed.Seconds()
-			fmt.Fprintf(a.Err, "\r[%s] verificado %s / %s · %.0f MB/s        ",
-				time.Now().Format("15:04:05"),
-				blockdev.HumanSize(comparados), blockdev.HumanSize(size), rate/(1<<20))
+			rate := float64(comparados) / time.Since(started).Seconds()
+			fmt.Fprint(a.Err, progressLine(
+				blockdev.HumanSize(comparados), blockdev.HumanSize(size),
+				fmt.Sprintf("%.0f MB/s", rate/(1<<20)),
+				etaText(rate, float64(size-comparados)), "verificando"))
 		}
 		if errors.Is(rerr, io.EOF) {
 			break
@@ -271,13 +279,13 @@ func primeraDiferencia(a, b []byte) int {
 // no esta donde debe.
 //
 // Las particiones no se tocan: siguen donde estaban y sobran 457 GiB sin usar.
-func (a *App) retargetGPT(disk *windisk.Disk) error {
-	table, actual, err := gpt.Read(disk)
+func (a *App) retargetGPT(dev blockdev.Writable) error {
+	table, actual, err := gpt.Read(dev)
 	if err != nil {
 		return fmt.Errorf("leer la tabla copiada: %w", err)
 	}
 
-	nuevo, err := gpt.NewLayout(disk.Size(), disk.SectorSize())
+	nuevo, err := gpt.NewLayout(dev.Size(), dev.SectorSize())
 	if err != nil {
 		return fmt.Errorf("recalcular el layout del disco: %w", err)
 	}
@@ -286,13 +294,56 @@ func (a *App) retargetGPT(disk *windisk.Disk) error {
 		return nil
 	}
 
-	if err := gpt.Commit(disk, table, nuevo); err != nil {
+	if err := gpt.Commit(dev, table, nuevo); err != nil {
 		return fmt.Errorf("reubicar el GPT al tamano del disco: %w", err)
 	}
 
-	sinUsar := disk.Size() - int64(table.Partitions[len(table.Partitions)-1].LastLBA+1)*int64(nuevo.SectorSize)
+	if len(table.Partitions) == 0 {
+		return nil
+	}
+
+	ultima := table.Partitions[len(table.Partitions)-1]
+	sinUsar := dev.Size() - int64(ultima.LastLBA+1)*int64(nuevo.SectorSize)
 	if sinUsar > 0 {
 		a.phase("el disco queda con %s sin particionar", blockdev.HumanSize(sinUsar))
 	}
+	return nil
+}
+
+// validateImage comprueba que el fichero es un disco con tabla GPT y las dos
+// particiones que espera una instalacion de DistroGo.
+//
+// Es una comprobacion de milisegundos y va antes de tocar el disco: si la imagen
+// esta a medias, es truncada o es cualquier otro fichero, mejor saberlo sin haber
+// destruido nada.
+func (a *App) validateImage(path string) error {
+	img, err := blockdev.OpenImage(path, false)
+	if err != nil {
+		return fmt.Errorf("abrir la imagen: %w", err)
+	}
+	defer img.Close()
+
+	table, _, err := gpt.Read(img)
+	if err != nil {
+		return fmt.Errorf("la imagen no tiene una tabla GPT legible: %w", err)
+	}
+	if len(table.Partitions) < 2 {
+		return fmt.Errorf("la imagen tiene %d particiones: no parece una instalacion de DistroGo", len(table.Partitions))
+	}
+
+	tieneESP := false
+	tieneRoot := false
+	for _, p := range table.Partitions {
+		switch p.Type {
+		case gpt.TypeESP:
+			tieneESP = true
+		case gpt.TypeLinuxFilesystem:
+			tieneRoot = true
+		}
+	}
+	if !tieneESP || !tieneRoot {
+		return fmt.Errorf("la imagen no tiene ESP y root: no parece una instalacion de DistroGo")
+	}
+
 	return nil
 }
