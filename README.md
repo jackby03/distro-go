@@ -73,18 +73,28 @@ DistroGo operates through a modular pipeline designed to minimize dependencies a
 [ Linux ISO (.iso) ]
         │
         ├── 1. Win32 Storage API
-        │      └── Lock volumes, initialize GPT, create ESP (FAT32) & Root (ext4)
+        │      └── Verify the disk identity, lock and dismount its volumes, write the GPT
         │
         ├── 2. User-Space Filesystem Engine
-        │      └── Format ext4 partition and capture superblock UUID
+        │      └── FAT32 ESP and ext4 root, formatted from scratch
         │
-        ├── 3. In-Memory SquashFS Streamer
-        │      └── Extract /casper/filesystem.squashfs directly to ext4 blocks
+        ├── 3. SquashFS Streamer
+        │      └── Stream the distribution rootfs straight into ext4 blocks
         │
-        └── 4. Bootloader Injection
-               └── Install portable GRUB EFI binary and link root UUID in /etc/fstab
+        ├── 4. Installed System
+        │      └── Kernel, initrd, grub.cfg and /etc/fstab, the user account with its
+        │         own group, and the live-only services (casper) masked
+        │
+        └── 5. Delivery
+               ├── flash: copy the finished image sequentially (recommended)
+               └── install --apply: build the filesystem in place (very slow on a HDD)
 
 ```
+
+Everything up to step 4 happens against a flat image, on any storage. Step 5 is the only
+one that depends on the target medium: a sequential copy runs at the speed of the disk,
+while building the filesystem in place does dozens of random accesses per file and on a
+spinning disk that is measured in hours.
 
 ---
 
@@ -119,28 +129,53 @@ go build -ldflags="-s -w" -o bin/distrogo.exe ./cmd/distrogo
 ### 2. Run Test Suite
 
 ```powershell
-go test -v -race ./pkg/...
+go test -short ./...
 
 ```
+
+`-short` skips the full SquashFS walk, which takes about 97 seconds. The full run is
+`go test ./...`. Thirteen packages, no external services.
 
 ### 3. Verify Image Integrity via QEMU (No Hardware Required)
 
+The launcher in `tools/lab-qemu.ps1` wraps QEMU with the pieces this project needs:
+
 ```powershell
-qemu-system-x86_64 -m 2G -smp 2 -nographic -serial mon:stdio `
-  -drive file=alpine-virt-3.24.3-x86_64.iso,media=cdrom `
-  -drive file=test.img,format=raw,if=virtio
+.\tools\lab-qemu.ps1 -Uefi -NoGuestIso -Image out\test.img -ResetNvram
 
 ```
+
+Options that matter: `-Uefi` (OVMF), `-NoGuestIso` (boot the disk under test instead of
+the Alpine CD), `-ResetNvram` (drop a stale boot entry), `-Headless`, `-SerialLog <file>`
+(capture the guest console, only useful when the guest has `console=ttyS0`), `-Gl`
+(virtio-vga-gl, 3D), `-NoGrab` (do not grab the mouse).
 
 Inside the Alpine guest environment:
 
 ```sh
-apk add e2fsprogs dosfstools
-e2fsck -fn /dev/vdb2
-debugfs -R 'ls -l /' /dev/vdb2
-fsck.fat -n /dev/vdb1
+apk add e2fsprogs sfdisk
+sfdisk --verify /dev/vda
+e2fsck -fn /dev/vda2
+fsck.fat -n /dev/vda1
 
 ```
+
+`dosfstools` and `mtools` are not on the CD: they need `-Network`, then
+`ip link set eth0 up`, `udhcpc -i eth0` and the repository lines that the launcher
+prints when it starts.
+
+---
+
+## Requirements
+
+- Windows 10 or 11, x86_64. No WSL, no Hyper-V, no kernel drivers.
+- An **elevated terminal** for anything that opens a physical disk.
+- A **process exclusion** for `distrogo.exe` in your antivirus. Defender blocks the
+  volume lock IOCTL for binaries without reputation, and without that lock the tool
+  refuses to write. This is the same requirement Rufus has, and code signing is the
+  long-term fix.
+- Target media: an SSD in a USB 3.0 enclosure is the comfortable choice. A USB HDD
+  works for `flash` and is unusable for `install --apply`.
 
 ---
 
@@ -221,6 +256,30 @@ To avoid data loss on production machines:
 * Disks hosting the active Windows system volume (`C:\`) or active bootloaders are strictly locked and cannot be selected as target drives.
 * Operations fail closed unless the target interface explicitly reports a removable/USB bus topology, or an explicit `--allow-non-usb` override flag is passed.
 * All sector calculations and layout operations support dry-run analysis prior to execution.
+
+---
+
+## Troubleshooting
+
+- **"para abrir el disco hace falta una consola elevada"** — the shell is not elevated.
+  Open PowerShell as Administrator; the check runs before touching any hardware.
+- **"el volumen ... no se pudo tomar"** with `Access is denied` — the antivirus is
+  holding the volume. Add the process exclusion for `distrogo.exe` and retry. Run
+  `install --target-disk N --expect-serial S -probe` to see which IOCTL is being
+  refused.
+- **"algun volumen sigue en uso"** — a partition on that disk has no drive letter but is
+  still mounted, or another program has it open. Check `mountvol` and close whatever is
+  using it.
+- **`install --apply` crawls** — expected on a spinning disk: it makes dozens of random
+  writes per file. Use `partition` and then `flash`.
+- **The firmware rejects the boot chain with an invalid signature** — Secure Boot. This
+  is `DG-34` and still open: disable Secure Boot for now, or wait for the signed chain.
+- **"Press Ctrl+Alt+G to release grab"** in QEMU — launch with `-NoGrab`.
+- **Black screen right after starting QEMU with `-Gl`** — the GL display backend does
+  not work on every host. Drop `-Gl`.
+- **The flashed disk only shows a few GB** — by design for now: the image is built at a
+  fixed size and the partitions are not grown. `flash` prints how much space is left
+  unused. Growing it is M7.5.
 
 ---
 
