@@ -277,3 +277,42 @@ func crearImagenValida(t *testing.T) string {
 	}
 	return path
 }
+
+func TestInstallRechazaAntesDeAbrirNada(t *testing.T) {
+	app, _, errBuf := newTestApp(fakeInventory())
+
+	casos := []struct {
+		nombre string
+		args   []string
+		quiere string
+	}{
+		{"sin disco", []string{"install"}, "falta --target-disk"},
+		{"apply sin iso", []string{"install", "--target-disk", "3", "--apply"}, "--apply necesita --iso"},
+		{"disco inexistente", []string{"install", "--target-disk", "9",
+			"--expect-serial", "SN-PRUEBAS-0001"}, "no existe el disco 9"},
+		{"serial que no coincide", []string{"install", "--target-disk", "3",
+			"--expect-serial", "OTRO"}, "serial"},
+	}
+
+	for _, c := range casos {
+		errBuf.Reset()
+		if code := app.Run(c.args); code == exitOK {
+			t.Errorf("%s: no puede terminar bien", c.nombre)
+		}
+		if !strings.Contains(errBuf.String(), c.quiere) {
+			t.Errorf("%s: esperaba %q en %q", c.nombre, c.quiere, errBuf.String())
+		}
+	}
+}
+
+func TestInstallRechazaElDiscoDelSistema(t *testing.T) {
+	app, _, errBuf := newTestApp(fakeInventory())
+
+	code := app.Run([]string{"install", "--target-disk", "1", "--expect-serial", "SN-NVME-0001"})
+	if code == exitOK {
+		t.Fatal("el disco del sistema no puede ser objetivo")
+	}
+	if !strings.Contains(errBuf.String(), "aloja el Windows") {
+		t.Fatalf("no explico el motivo: %q", errBuf.String())
+	}
+}
