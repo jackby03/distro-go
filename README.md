@@ -53,6 +53,10 @@ Known limitations at this stage:
 - **Account creation is not idempotent.** Installing over an existing tree is not
   supported; use a fresh image per install.
 
+Directions that were evaluated but not taken, with their trade-offs and open questions, are
+in [docs/design-notes.md](docs/design-notes.md): unattended install, single-disk
+self-install, network provisioning and virtual appliances.
+
 ---
 
 ## Key Features

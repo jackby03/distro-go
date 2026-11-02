@@ -209,3 +209,15 @@ M1 y M2 son independientes entre si y se pueden paralelizar si hay prisa.
 - Al cerrar un milestone se cambia `[ ]` por `[X]` y se anota la fecha y la evidencia
   en backlog.md.
 - Si cambia un criterio de salida, se cambia aqui y se cita el DG que lo motivo.
+
+## Direcciones exploradas (no comprometidas)
+
+Despues de M7 quedaron tres muros: Secure Boot, la velocidad del escritor y la friccion de
+Windows. Las salidas que se discutieron estan en docs/design-notes.md, con sus cuentas y
+sus requisitos: instalacion desatendida, autoinstalacion en un solo disco, liberar el
+volumen live tras el primer inicio, aprovisionamiento por red y appliances virtuales.
+
+Ninguna esta implementada y ninguna entra en los milestones actuales. Antes de mover ficha
+hay tres decisiones humanas en la seccion 10 de ese documento, y la primera condiciona
+todas las demas: si el producto es "un Linux portatil en un USB" o "equipos instalados y
+configurados sin intervencion".
